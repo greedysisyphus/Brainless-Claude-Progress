@@ -1,0 +1,5 @@
+{
+  "name": "brainless-claude-progress",
+  "owner": { "name": "greedysisyphus" },
+  "plugins": [{ "name": "brainless-claude-progress", "source": "./" }]
+}
