@@ -10,7 +10,7 @@ const PANE = {
 } as const
 
 // the engine beneath the mod, as each test needs it
-function engine(on: any, opts: { agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
+function engine(on: any, opts: { history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
   mock.store(on, opts.store ?? {})
   mock.env(on, { LANG: opts.LANG ?? 'en_US.UTF-8' })
   const clock = mock.clock(on)
@@ -20,6 +20,7 @@ function engine(on: any, opts: { agents?: unknown[]; store?: Record<string, unkn
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/' }))
+  on('session.messages', () => ({ value: (opts.history ?? []).map(text => ({ role: 'user', text, toolUses: [] })) }))
   on('agent.list', () => ({ value: opts.agents ?? [] }))
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', (_: any, e: any) => ({ text: e.text }))
@@ -188,6 +189,23 @@ test('the language follows Claude Code’s setting, else the person’s writing,
   await $.command.run({ command: 'progress', args: 'lang auto' } as any)
   v = await view($)
   expect(await v.text(/^Background$/)).toBe('Background')
+  await v.close()
+})
+
+test('a reloaded conversation starts in the language the person has been writing in', async ($, on) => {
+  engine(on, { LANG: 'en_US.UTF-8', history: ['幫我看一下這個畫面', '<task-notification>done</task-notification>', '/progress'] })
+  await start($)
+  const v = await view($)
+  expect(await v.text(/^背景工作$/)).toBe('背景工作')
+  await v.close()
+})
+
+test('a running agent named for a ticket makes it the current ticket when nothing else says so', async ($, on) => {
+  engine(on, { agents: [{ id: 'old', description: 'Device verify #128', type: 'general-purpose', status: 'running' }] })
+  await start($)
+  const v = await view($)
+  expect(await v.text(/^#128$/)).toBe('#128')
+  expect(await v.text(/Verify/)).toMatch(/^[·✢✳✶✻✽] Verify$/)
   await v.close()
 })
 
