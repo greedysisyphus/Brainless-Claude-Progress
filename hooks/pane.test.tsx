@@ -385,6 +385,24 @@ test('a run that has only queued its quick checks is estimated as a whole run, n
   await v.close()
 })
 
+test('a ticket named with nothing under it gives way to the one whose PR is running', async ($, on) => {
+  const running = JSON.stringify({ title: 'Small fixes', state: 'OPEN', url: 'https://github.com/me/app/pull/5', statusCheckRollup: [{ name: 'test', status: 'IN_PROGRESS', conclusion: '', startedAt: '2025-01-06T09:10:00Z', completedAt: '0001-01-01T00:00:00Z' }] })
+  const clock = engine(on, { gh: a => (a.includes('view') && a.includes('5') ? running : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-small-fixes && gh pr view 5 --json state' })
+  // a branch for the follow-up names a new ticket, but nothing runs under it yet
+  await $.tool.call({ tool: 'Bash', command: 'git push -u origin me/130-follow-up' })
+  await clock.advance(60000)
+  let v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#128')
+  await v.close()
+  // once work starts under the new one, it is the current ticket
+  await $.tool.call({ tool: 'Agent', description: 'Implement #130 follow-up', prompt: 'go', run_in_background: true } as any)
+  v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#130')
+  await v.close()
+})
+
 // ── motion ───────────────────────────────────────────────────────
 
 test('a background command is filed by its own description, not by words in the command', async ($, on) => {

@@ -266,8 +266,12 @@ async function viewOf($: any) {
   // filed by today's rules, so a task recorded before an update or a reload is not stuck under an old step
   const all = [...tasks.map(x => ({ ...x, stage: stageOf(x.label) })), ...agents]
   const live = all.filter(x => !x.doneAt)
-  // with nothing else to go on, the ticket is the one the running work is named for
-  const cur = (await read($, ticket)) || live.find(x => x.ticket)?.ticket || ''
+  // the ticket last named, unless nothing here belongs to it while running work or a watched PR
+  // belongs to another: a ticket with work under way beats an empty one
+  const named = await read($, ticket)
+  const active = live.find(x => x.ticket)?.ticket ?? [...watched].reverse().find(p => p.ticket && p.state !== 'MERGED' && p.state !== 'CLOSED')?.ticket
+  const idle = named && !all.some(x => x.ticket === named) && !watched.some(p => p.ticket === named)
+  const cur = (idle && active) || named || active || ''
   const recent = tasks.filter(x => x.doneAt).slice(-2)
 
   // the view: one row per step of the current ticket, CI and merge from its PR
