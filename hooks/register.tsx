@@ -361,10 +361,15 @@ export function statusLine(v: Awaited<ReturnType<typeof viewOf>>): string | unde
 // ponytail: module memory of the last line sent; a reload sends it once more
 let lastStatus: string | undefined = ''
 
+export type BarMode = 'always' | 'auto' | 'off'
+export const barModeOf = (v: unknown): BarMode => (v === 'auto' || v === 'off' ? v : 'always')
+
 async function refreshStatus($: any) {
-  const panes = ((await $.ui.panes().catch(() => [])) as any[])
+  // always: under the prompt whatever the pane does; auto: only while the pane is off screen
+  const mode = barModeOf(await $.store.get('bar'))
+  const panes = mode === 'auto' ? ((await $.ui.panes().catch(() => [])) as any[]) : []
   const onScreen = panes.some(p => p.id === PANE && p.isPlaced && p.isShown)
-  const line = onScreen ? undefined : statusLine(await viewOf($))
+  const line = mode === 'off' || onScreen ? undefined : statusLine(await viewOf($))
   if (line === lastStatus) return
   lastStatus = line
   $.ui.status(line)
@@ -374,7 +379,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'progress',
-      description: 'Open the progress pane · still / move · lang en|zh-Hant|zh-Hans|ja|auto',
+      description: 'Open the progress pane · still / move · bar always|auto|off · lang en|zh-Hant|zh-Hans|ja|auto',
     })
     if ((await $.store.get('still')) === true) await update($, quiet, () => true)
     const picked = normalizeLang(await $.store.get('lang'))
@@ -421,6 +426,15 @@ export const register: Register = on => {
     const [word = '', arg = ''] = e.args.trim().split(/\s+/)
     const pick = word.toLowerCase()
     let text: string | undefined
+    if (pick === 'bar') {
+      const mode = arg.toLowerCase()
+      if (mode === 'always' || mode === 'auto' || mode === 'off') {
+        await $.store.set('bar', mode)
+        await refreshStatus($)
+      }
+      const l = await langNow($)
+      text = mode === 'always' || mode === 'auto' || mode === 'off' ? STRINGS[l].barSet[mode] : STRINGS[l].barUnknown
+    }
     if (pick === 'lang' || pick === 'language') {
       if (arg.toLowerCase() === 'auto') {
         await update($, langPick, () => '')

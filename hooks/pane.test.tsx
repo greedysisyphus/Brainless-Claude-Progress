@@ -315,11 +315,11 @@ test('a running step with no history does not pose as a countdown (the 18 minute
   expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · ≥ 約 18 分')
 })
 
-test('the status line carries the ticket, the step under way, the time left and your turn — only while the pane is off screen', async ($, on) => {
+test('in auto mode the status line carries the ticket, the step under way, the time left and your turn — only while the pane is off screen', async ($, on) => {
   const lines: (string | undefined)[] = []
   let shown = false
   const clock = engine(on, {
-    LANG: 'zh_TW.UTF-8', store: { 'dur:stage:verify': [10 * 60000] }, status: lines,
+    LANG: 'zh_TW.UTF-8', store: { 'dur:stage:verify': [10 * 60000], bar: 'auto' }, status: lines,
     panes: () => [{ id: 'progress', title: '進度', isShown: shown, isFocused: false, isPlaced: shown }],
   })
   await start($)
@@ -401,6 +401,20 @@ test('a ticket named with nothing under it gives way to the one whose PR is runn
   v = await view($)
   expect(await v.text(/^#1\d\d$/)).toBe('#130')
   await v.close()
+})
+
+test('the bar under the prompt is on by default beside the pane, and /progress bar off clears it', async ($, on) => {
+  const lines: (string | undefined)[] = []
+  engine(on, { LANG: 'zh_TW.UTF-8', store: { 'dur:stage:verify': [10 * 60000] }, status: lines,
+    panes: () => [{ id: 'progress', title: '進度', isShown: true, isFocused: false, isPlaced: true }] })
+  await start($)
+  await verify($)
+  await $.turn.complete(reply('still running'))
+  expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · 約 10 分')
+  await $.command.run({ command: 'progress', args: 'bar off' } as any)
+  expect(lines[lines.length - 1]).toBeUndefined()
+  await $.command.run({ command: 'progress', args: 'bar always' } as any)
+  expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · 約 10 分')
 })
 
 // ── motion ───────────────────────────────────────────────────────
