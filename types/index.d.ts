@@ -19,6 +19,8 @@ export type PrWatch = {
   repo?: string
   cwd: string
   ticket?: string
+  /** the PR's own branch, once a poll has read it */
+  branch?: string
   title?: string
   state?: string
   checks: CheckRun[]
