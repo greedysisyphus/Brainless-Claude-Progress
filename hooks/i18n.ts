@@ -219,14 +219,19 @@ export function detectLang(text: string): Lang | undefined {
   return undefined
 }
 
-// Headings a reply uses when it hands a decision or a check back to the person.
-const ASK_HEADS = [
-  'decision needed', 'decisions needed', 'needs your decision', 'your decision', 'your call',
-  'action needed', 'action required', 'waiting on you', 'please check', 'please verify', 'please review',
-  '要你決定', '需要你決定', '請你決定', '請你親眼看', '待你確認', '請確認',
-  '要你决定', '需要你决定', '请你决定', '请你亲眼看', '待你确认', '请确认',
-  '要判断', 'ご判断ください', '判断してほしいこと', '決めてほしいこと', '確認してください', '要確認',
+// Headings a reply uses when it hands something back to the person: a decision outranks
+// a request to go and look, whichever comes first in the reply.
+const DECIDE_HEADS = [
+  'decision needed', 'decisions needed', 'needs your decision', 'your decision', 'your call', 'waiting on you',
+  '要你決定', '需要你決定', '請你決定', '要你决定', '需要你决定', '请你决定',
+  '要判断', 'ご判断ください', '判断してほしいこと', '決めてほしいこと',
 ]
+const CHECK_HEADS = [
+  'action needed', 'action required', 'please check', 'please verify', 'please review',
+  '請你親眼看', '待你確認', '請確認', '请你亲眼看', '待你确认', '请确认',
+  '確認してください', '要確認',
+]
+const ASK_HEADS = [...DECIDE_HEADS, ...CHECK_HEADS]
 const STOP = /^(結論|结论|下一步|未執行|未执行|next steps?|summary|not run|结論|次のステップ|まとめ|未実施)\b/i
 
 const strip = (l: string) => l.replace(/^[\s>*#_\-•]+/, '').replace(/[*_]+/g, '').trim()
@@ -235,9 +240,9 @@ const strip = (l: string) => l.replace(/^[\s>*#_\-•]+/, '').replace(/[*_]+/g, 
 export function askOf(answer: string, max = 140): string {
   const text = answer.replace(/```[\s\S]*?```/g, '')
   const lines = text.split('\n')
-  for (let i = 0; i < lines.length; i++) {
+  for (const heads of [DECIDE_HEADS, CHECK_HEADS]) for (let i = 0; i < lines.length; i++) {
     const line = strip(lines[i]!)
-    const head = ASK_HEADS.find(h => line.toLowerCase().startsWith(h))
+    const head = heads.find(h => line.toLowerCase().startsWith(h))
     if (!head) continue
     const first = line.slice(head.length).replace(/^[\s:：]+/, '')
     const rest: string[] = []

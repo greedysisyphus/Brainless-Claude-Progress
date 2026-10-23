@@ -55,6 +55,19 @@ test('a decision heading is found in every language and markdown dress', async (
   expect(askOf('請你親眼看：打開設定頁看深色模式。')).toBe('打開設定頁看深色模式。')
 })
 
+test('a decision outranks a request to go and look, even when the look comes first', async () => {
+  const reply = `**請你親眼看：** 截圖在 shots/ 資料夾。
+
+**要你決定：**
+- 英文版返回鍵仍顯示 Back。選 A 或 B？
+- 淺色模式頂端看不到時間。另開小票嗎？
+
+**未執行：**
+- 真機沒有驗。`
+  expect(askOf(reply)).toBe('英文版返回鍵仍顯示 Back。選 A 或 B？ / 淺色模式頂端看不到時間。另開小票嗎？')
+  expect(askOf('Please check: the screenshot in shots/.')).toBe('the screenshot in shots/.')
+})
+
 test('with no heading, a reply that ends on a question is waiting; one that does not is not', async () => {
   expect(askOf('I fixed the parser and the tests pass.\n\nShould I also update the README?')).toBe('Should I also update the README?')
   expect(askOf('改好了。要我順便推上去嗎？')).toBe('要我順便推上去嗎？')
@@ -108,6 +121,7 @@ test('steps are told apart in four languages', async () => {
   expect(['Review PR 12', '審查程式', '审查代码', 'コードレビュー'].map(stageOf)).toEqual(['review', 'review', 'review', 'review'])
   expect(['Device verify #1', 'Run e2e tests', '上機驗證', '验证修复', '動作検証'].map(stageOf)).toEqual(['verify', 'verify', 'verify', 'verify', 'verify'])
   expect(['Implement search', 'Fix the crash', '寫程式', '实现搜索', '実装する'].map(stageOf)).toEqual(['write', 'write', 'write', 'write', 'write'])
+  expect(['Run full local CI and typecheck', 'npm run lint', 'tsc --noEmit'].map(stageOf)).toEqual(['verify', 'verify', 'verify'])
   expect(stageOf('Explore the codebase')).toBe('other')
 })
 
@@ -291,6 +305,16 @@ test('a running step with no history does not pose as a countdown (the 18 minute
 })
 
 // ── motion ───────────────────────────────────────────────────────
+
+test('a background command is filed by its own description, not by words in the command', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && git log --grep=review -1 && npm run build && npm run ci:local', description: 'Run full local CI and typecheck', run_in_background: true })
+  const v = await view($)
+  expect(await v.text(/Verify/)).toMatch(/^[·✢✳✶✻✽] Verify$/)
+  expect(await v.text(/Write/)).toBe('– Write')
+  await v.close()
+})
 
 test('every spark frame is 7 columns wide, so the card never jumps', async () => {
   for (const mood of ['work', 'ask', 'idle', 'fail', 'done'] as const)
