@@ -719,12 +719,16 @@ export const register: Register = on => {
         <Text dimColor>{x.note}</Text>
       </Box>
     )
-    const taskRow = (x: BgTask) => (
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text><Text color="claude">{still ? '✻' : spin} </Text>{fit(x.label, width - 12)}</Text>
-        <Text dimColor>{ago(t - x.startedAt, x.startedAt)}</Text>
-      </Box>
-    )
+    // the label gives way to the age, so the age never wraps: border and padding 4, glyph 2, a gap 1
+    const taskRow = (x: BgTask) => {
+      const age = ago(t - x.startedAt, x.startedAt)
+      return (
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text><Text color="claude">{still ? '✻' : spin} </Text>{fit(x.label, width - 7 - age.length)}</Text>
+          <Text dimColor>{age}</Text>
+        </Box>
+      )
+    }
     const doneRow = (x: BgTask) => {
       const bad = x.status && x.status !== 'completed'
       return <Text dimColor><Text color={bad ? 'error' : 'success'}>{bad ? '✕' : '✓'}</Text> {fit(x.label, width - 6)}</Text>

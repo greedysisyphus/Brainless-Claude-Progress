@@ -827,3 +827,14 @@ test('Task calls build and update the same list', async ($, on) => {
   expect(await v.text(/done$/)).toBe('1/1 done')
   await v.close()
 })
+
+test('a long background name gives way to its age, so the age stays on one line', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'sleep 900', description: 'Wait fifteen minutes in the background while nothing else happens', run_in_background: true } as any)
+  const v = await view($)
+  // 44 columns: 4 of border and padding, 2 of glyph, a gap, 12 of "just started" leave 25 for the name
+  expect((await v.text(/^[·✢✳✶✻✽] Wait fifteen/))?.slice(2).length).toBe(25)
+  expect(await v.text(/^just started$/)).toBe('just started')
+  await v.close()
+})
