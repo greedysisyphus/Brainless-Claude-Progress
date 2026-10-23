@@ -65,6 +65,20 @@ function ticketOfRef(ref: string): string | undefined {
 
 // The ticket a shell command works on: only where the command says so (the folder it enters,
 // a branch it makes or pushes, an issue it develops), never a number that merely appears in its text.
+// A command with no description, shown by what it does: past any `cd …&&` and `NAME=value` it opens with.
+export function labelOf(cmd: string): string {
+  let rest = cmd.trim()
+  for (;;) {
+    const next = rest
+      .replace(/^cd\s+("[^"]*"|'[^']*'|\S+)\s*(&&|;)\s*/, '')
+      .replace(/^[A-Za-z_][A-Za-z0-9_]*=("[^"]*"|'[^']*'|\S*)\s*(;|&&)?\s*/, '')
+    if (next === rest) break
+    rest = next
+  }
+  const line = (rest || cmd).split('\n')[0]!.trim()
+  return line.length > 40 ? line.slice(0, 39) + '…' : line
+}
+
 // The folder a command cds into, when that folder's name is what names its ticket.
 export function ticketDirOf(cmd: string): string | undefined {
   const cd = cmd.match(CD)
@@ -363,6 +377,8 @@ async function viewOf($: any) {
   const ciTypical = median(await past($, ciKey(repo, 'total')))
   if (ci.mark === 'run') eta > 0 ? (left += eta) : (blocker ||= 'CI')
   else if (ci.mark === 'none' && cur) ciTypical ? (left += ciTypical) : unknown++
+  // red while work still runs: another run is coming (a gate before the full run, a fix being pushed)
+  else if (ci.mark === 'fail' && live.length) ciTypical ? (left += ciTypical) : unknown++
   const finished = pr?.state === 'MERGED'
   // a ticket with no work and no PR in this session has not started: no time to give
   if (cur && !all.some(x => x.ticket === cur) && !pr && !blocker) left = unknown = 0
@@ -390,7 +406,12 @@ async function viewOf($: any) {
 // The band above the prompt: the ticket, the step under way, the time left, and whether it is your turn.
 export function barOf(v: Awaited<ReturnType<typeof viewOf>>) {
   const running = v.steps.find(x => x.mark === 'run') ?? (v.ci.mark === 'run' ? v.ci : undefined)
-  const time = v.finished ? v.s.done : v.left > 0 ? (v.blocker ? '≥ ' : '') + v.s.short(mins(v.left)) : ''
+  const ticking = v.ci.mark === 'run' || v.steps.some(x => x.mark === 'run')
+  const time = v.finished ? v.s.done
+    : v.left <= 0 ? ''
+    : v.blocker ? '≥ ' + v.s.short(mins(v.left))
+    : !ticking ? v.s.shortPending(mins(v.left))
+    : v.s.short(mins(v.left))
   return { running, time, isEmpty: !v.cur && !running && !v.yourTurn }
 }
 
@@ -550,7 +571,7 @@ export const register: Register = on => {
 
     const id = (ran as any).result?.backgroundTaskId
     if (id) {
-      const label = e.description ?? cmd.slice(0, 40)
+      const label = e.description ?? labelOf(cmd)
       const task: BgTask = { id, label, kind: 'bash', stage: stageOf(e.description ?? cmd), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: await $.clock.now() }
       await update($, bg, all => [...all, task].slice(-10))
     }

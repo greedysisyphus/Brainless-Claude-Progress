@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { checksOf, ciTotal, isPerson, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { checksOf, ciTotal, isPerson, labelOf, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -595,6 +595,52 @@ test('a merged ticket with nothing running gives way to the ticket whose work ru
   const v = await view($)
   expect(await v.text(/^#1\d\d$/)).toBe('#132')
   await v.close()
+})
+
+test('a command with no description is shown by what it does', async () => {
+  expect(labelOf('cd /w/128-x && npm run ci:local')).toBe('npm run ci:local')
+  expect(labelOf('U=814BD3D6-6579; S=/tmp/x; xcrun simctl io $U screenshot $S/a.png')).toBe('xcrun simctl io $U screenshot $S/a.png')
+  expect(labelOf('cd "/a b/c" && W=1 && make build')).toBe('make build')
+  expect(labelOf('git status')).toBe('git status')
+})
+
+test('the pane lists a background command with no description by what it does', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && U=ABC; xcrun simctl io $U screenshot shot.png', run_in_background: true } as any)
+  const v = await view($)
+  expect(await v.text(/simctl/)).toMatch(/xcrun simctl io/)
+  expect(await v.text(/cd \/w/)).toBeFalsy()
+  await v.close()
+})
+
+test('a red preflight while work still runs counts the coming full run in the estimate', async ($, on) => {
+  const red = JSON.stringify({ title: 'Brand', state: 'OPEN', url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-brand', statusCheckRollup: [{ name: 'ci-gate', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2025-01-06T09:10:00Z', completedAt: '2025-01-06T09:11:00Z' }] })
+  const clock = engine(on, { store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('view') && a.includes('5') ? red : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-brand && gh pr view 5 --json state' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run ship', description: 'Wait preflight, ship, then CI', run_in_background: true })
+  await clock.advance(60000)
+  let v = await view($)
+  expect(await v.text(/^✕ CI$/)).toBe('✕ CI')
+  expect(await v.text(/18 min/)).toMatch(/~18 min/)
+  await v.close()
+  // with nothing running the red stands alone: no run is coming
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  await $.turn.complete(reply('Done for now.'))
+  v = await view($)
+  expect(await v.text(/18 min/)).toBeFalsy()
+  await v.close()
+})
+
+test('with nothing under way the band says it waits for the next step', async ($, on) => {
+  const clock = engine(on, { LANG: 'zh_TW.UTF-8', store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await clock.advance(6000)
+  await $.tool.call({ tool: 'Bash', command: 'git checkout -b me/128-x' })
+  await verify($)
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>a1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  expect(await band($)).toBe('#128 | 等下一步・約 18 分 | 輪到你')
 })
 
 // ── motion ───────────────────────────────────────────────────────
