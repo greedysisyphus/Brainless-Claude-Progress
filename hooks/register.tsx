@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { BgTask, CheckRun, LangPick, PrWatch, Stage, Turn } from '../types'
+import type { BgTask, CheckRun, LangPick, PrWatch, Stage, Todo, Turn } from '../types'
 import { askOf, detectLang, type Lang, langName, normalizeLang, STRINGS } from './i18n'
 
 const PANE = 'progress'
@@ -18,6 +18,10 @@ const langAuto = atom({ plugin: 'brainless-claude-progress', key: 'langAuto' } a
 const repoNow = atom({ plugin: 'brainless-claude-progress', key: 'repo' } as const, '')
 // the languages of the person's last ten messages: one short line in another language does not tip it
 const said = atom({ plugin: 'brainless-claude-progress', key: 'said' } as const, [] as Lang[])
+const todos = atom({ plugin: 'brainless-claude-progress', key: 'todos' } as const, [] as Todo[])
+const doing = atom({ plugin: 'brainless-claude-progress', key: 'doing' } as const, { tool: '', text: '' })
+const turnAt = atom({ plugin: 'brainless-claude-progress', key: 'turnAt' } as const, 0)
+const place = atom({ plugin: 'brainless-claude-progress', key: 'place' } as const, '')
 const barMode = atom({ plugin: 'brainless-claude-progress', key: 'bar' } as const, 'always' as 'always' | 'auto' | 'off')
 
 // ponytail: module flag the drawing sets and the frame timer reads; a reload resets it to off until the next draw
@@ -141,13 +145,19 @@ async function past($: any, key: string): Promise<number[]> {
 
 const ciKey = (repo: string | undefined, name: string) => `ci:${repo || '?'}:${name}`
 
+// each repository keeps its own step times; one with none yet borrows the shared record from before 1.5.0
+async function stagePast($: any, repo: string, stage: Stage): Promise<number[]> {
+  const own = await past($, `stage:${repo || '?'}:${stage}`)
+  return own.length ? own : past($, `stage:${stage}`)
+}
+
 // a task that ended: mark it, and remember how long its kind of step took
 async function finish($: any, id: string, status?: string) {
   const x = (await read($, bg)).find(y => y.id === id && !y.doneAt)
   if (!x) return
   const end = await $.clock.now()
   await update($, bg, all => all.map(y => (y.id === id && !y.doneAt ? { ...y, doneAt: end, status } : y)))
-  if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${x.stage}`, end - x.startedAt)
+  if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${(await read($, repoNow)) || '?'}:${x.stage}`, end - x.startedAt)
 }
 
 // A PR this session opened belongs to the ticket at hand; one it only looks at belongs to whatever
@@ -264,6 +274,24 @@ async function poll($: any) {
   }
 }
 
+// What a tool call does, in a few words: its own description, else the tool and the file, pattern or address it works on.
+export function activityOf(e: any): { tool: string; text: string } {
+  if (typeof e.description === 'string' && e.description.trim()) return { tool: '', text: e.description.trim() }
+  const arg = String(e.file_path ?? e.notebook_path ?? e.pattern ?? e.query ?? e.url ?? e.skill ?? '')
+  return { tool: String(e.tool), text: arg.includes('/') && !/^https?:/.test(arg) ? arg.split('/').filter(Boolean).pop() ?? arg : arg }
+}
+
+// Claude's own to-do list after a TodoWrite, TaskCreate or TaskUpdate call
+export function todosAfter(list: Todo[], e: any, result: any): Todo[] {
+  if (e.tool === 'TodoWrite') return (e.todos ?? []).map((x: any, i: number) => ({ id: String(i), text: x.status === 'in_progress' && x.activeForm ? x.activeForm : x.content, status: x.status }))
+  if (e.tool === 'TaskCreate' && result?.task?.id) return [...list, { id: String(result.task.id), text: e.subject, status: 'pending' }]
+  if (e.tool === 'TaskUpdate') {
+    if (e.status === 'deleted') return list.filter(x => x.id !== e.taskId)
+    return list.map(x => (x.id === e.taskId ? { ...x, text: e.subject ?? x.text, status: e.status ?? x.status } : x))
+  }
+  return list
+}
+
 // the most frequent; a tie goes to the most recent
 export function mostOf(langs: Lang[]): Lang | undefined {
   const count = new Map<Lang, number>()
@@ -301,6 +329,10 @@ async function viewOf($: any) {
   const frame_ = await read($, frame)
   const still = await read($, quiet)
   const sessionRepo = await read($, repoNow)
+  const list = await read($, todos)
+  const act = await read($, doing)
+  const since = await read($, turnAt)
+  const where = await read($, place)
   const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
 
   // agents spawned before this load, or not through the Agent tool, are known only to the engine
@@ -341,7 +373,7 @@ async function viewOf($: any) {
     const last = seen[i]
     const mark: Mark = !last ? (i < furthest ? 'skip' : 'none')
       : !last.doneAt ? 'run' : last.status && last.status !== 'completed' ? 'fail' : 'done'
-    const typical = median(await past($, `stage:${stage}`))
+    const typical = median(await stagePast($, sessionRepo, stage))
     const ran = last && !last.doneAt && last.startedAt ? t - last.startedAt : 0
     const name = s[stage as 'write' | 'review' | 'verify']
     const over = mark === 'run' && typical > 0 && ran > typical
@@ -401,8 +433,13 @@ async function viewOf($: any) {
     : waiting ? waiting
     : who === 'idle' && !busy ? s.idleWaiting : ''
 
+  // with no ticket: what Claude is doing now and for how long, and its own to-do list
+  const now_ = act.text ? s.doing(act.tool ? `${s.tools[act.tool] ?? act.tool} ${act.text}`.trim() : act.text) : ''
+  const turnLine = since ? s.thisTurn(mins(t - since)) : ''
+  const todoDone = list.filter(x => x.status === 'completed').length
+
   motion = !still && (busy || ci.mark === 'run')
-  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still }
+  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where }
 }
 
 // The band above the prompt: the ticket, the step under way, the time left, and whether it is your turn.
@@ -414,7 +451,7 @@ export function barOf(v: Awaited<ReturnType<typeof viewOf>>) {
     : v.blocker ? '≥ ' + v.s.short(mins(v.left))
     : !ticking ? v.s.shortPending(mins(v.left))
     : v.s.short(mins(v.left))
-  return { running, time, isEmpty: !v.cur && !running && !v.yourTurn }
+  return { running, time, isEmpty: !v.cur && !running && !v.yourTurn && !v.now_ && !v.list.length }
 }
 
 export type BarMode = 'always' | 'auto' | 'off'
@@ -452,6 +489,9 @@ export const register: Register = on => {
     $.clock.after(5000, async () => {
       const cwd = await $.session.cwd()
       const repo = await repoOf($, cwd)
+      const branch = await $.process.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd, timeoutMs: 5000 }).catch(() => undefined)
+      const folder = cwd.split('/').filter(Boolean).pop() ?? ''
+      await update($, place, () => [folder, branch?.exitCode === 0 ? branch.stdout.trim() : ''].filter(Boolean).join(' · '))
       if (repo) {
         await update($, repoNow, () => repo)
         await seedCi($, cwd, repo)
@@ -524,18 +564,35 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    if (!e.agentId) await update($, turn, () => 'working')
+    if (!e.agentId) {
+      await update($, turn, () => 'working')
+      const at = await $.clock.now()
+      await update($, turnAt, () => at)
+      await update($, doing, () => ({ tool: '', text: '' }))
+    }
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) {
       await update($, turn, () => 'idle')
+      await update($, turnAt, () => 0)
+      await update($, doing, () => ({ tool: '', text: '' }))
       // a reply with no decision keeps the one still unanswered; only the person's reply clears it
       const waiting = askOf(e.answer)
       if (waiting) await update($, ask, () => waiting)
     }
     return next(e)
+  })
+
+  // what the main loop is doing now, and its own to-do list
+  on('tool.call', async ($, e, next) => {
+    if ((e as any).agentId) return next(e)
+    const tool = String((e as any).tool)
+    if (!['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'AskUserQuestion', 'ToolSearch'].includes(tool)) await update($, doing, () => activityOf(e))
+    const ran = await next(e)
+    if (['TodoWrite', 'TaskCreate', 'TaskUpdate'].includes(tool)) await update($, todos, list => todosAfter(list, e, (ran as any).result))
+    return ran
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
@@ -610,7 +667,9 @@ export const register: Register = on => {
     const shimmer = v.still || !v.bar.includes('▱') ? v.bar : v.bar.replace('▱', v.frame_ % 2 ? '▰' : '▱')
     return (
       <Box flexDirection="row" gap={2}>
-        {v.cur ? <Text bold>{v.cur}</Text> : ''}
+        {v.cur ? <Text bold>{v.cur}</Text> : v.where ? <Text bold>{v.where}</Text> : ''}
+        {!v.cur && !running && v.list.length ? <Text color="claude">{v.s.todoDone(v.todoDone, v.list.length)}</Text> : ''}
+        {!v.cur && !running && v.now_ ? <Text><Text color="claude">{glyph}</Text> {v.now_}</Text> : ''}
         {running ? <Text><Text color="claude">{glyph}</Text> {running.name}{running.isCi && v.bar ? <Text color="claude"> {shimmer}</Text> : ''}</Text> : ''}
         {time ? <Text color={v.finished ? 'success' : 'claude'}>{time}</Text> : ''}
         {v.yourTurn ? <Text bold color="warning">{v.s.yourTurn}</Text> : ''}
@@ -620,13 +679,13 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still } = await viewOf($)
+    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where } = await viewOf($)
     const width = Math.max(24, (e.props as any).bodyColumns ?? 40)
     const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
     const spin = SPIN[frame_ % SPIN.length]!
     const GLYPH: Record<Mark, string> = { done: '✓', run: still ? '✻' : spin, fail: '✕', none: '○', skip: '–' }
     const COLOR: Record<Mark, string | undefined> = { done: 'success', run: 'claude', fail: 'error', none: undefined, skip: undefined }
-    const title = cur || s.ticket
+    const title = cur || where || s.ticket
     const fit = (x: string, n: number) => (x.length > n ? x.slice(0, n - 1) + '…' : x)
     // the CI bar's next cell pulses while checks run
     const shimmer = still || !bar.includes('▱') ? bar : bar.replace('▱', frame_ % 2 ? '▰' : '▱')
@@ -637,6 +696,19 @@ export const register: Register = on => {
     const spark = sparkFor(mood, still ? 4 : frame_)
     const SPARK_COLOR: Record<Mood, string | undefined> = { work: 'claude', ask: 'warning', idle: undefined, fail: 'error', done: 'success' }
 
+    const TODO_MARK: Record<Todo['status'], Mark> = { completed: 'done', in_progress: 'run', pending: 'none' }
+    const todoRow = (x: Todo) => (
+      <Text>
+        <Text color={COLOR[TODO_MARK[x.status]]} dimColor={x.status === 'pending'}>{GLYPH[TODO_MARK[x.status]]} </Text>
+        <Text dimColor={x.status === 'pending'} bold={x.status === 'in_progress'}>{fit(x.text, width - 6)}</Text>
+      </Text>
+    )
+    // no ticket: the to-do list if Claude keeps one, else what it is doing now and how long this turn has run
+    const noTicket = list.length
+      ? [<Box flexDirection="row" justifyContent="space-between"><Text bold>{s.todoDone(todoDone, list.length)}</Text><Text dimColor>{turnLine}</Text></Box>, ...list.map(todoRow)]
+      : now_ || turnLine
+        ? [<Text color="claude">{fit(now_, width - 4)}</Text>, <Text dimColor>{turnLine}</Text>]
+        : [<Text dimColor>{s.noTicket}</Text>]
     const stepRow = (x: Step) => (
       <Box flexDirection="row" justifyContent="space-between">
         <Text>
@@ -666,6 +738,8 @@ export const register: Register = on => {
             <Text bold>{title}</Text>
             {cur || pr
               ? <Text>{rows.map((x, i) => <Text><Text color={COLOR[x.mark]} dimColor={x.mark === 'none' || x.mark === 'skip'}>{GLYPH[x.mark]} </Text><Text dimColor={x.mark === 'none' || x.mark === 'skip'} bold={x.mark === 'run'}>{x.name}</Text>{i < rows.length - 1 ? <Text dimColor> · </Text> : ''}</Text>)}</Text>
+              : list.length ? <Text color="claude">{s.todoDone(todoDone, list.length)}</Text>
+              : now_ ? <Text color="claude">{fit(now_, width - title.length - 4)}</Text>
               : <Text dimColor>{s.noTicket}</Text>}
           </Box>
           {(etaLine || live.length > 0) && (
@@ -694,7 +768,7 @@ export const register: Register = on => {
             </Box>
           </Box>
           <Text> </Text>
-          {cur || pr ? rows.map(stepRow) : <Text dimColor>{s.noTicket}</Text>}
+          {cur || pr ? rows.map(stepRow) : noTicket}
           {failNames.length > 0 && <Text color="error">  {failNames.join(s.sep)}</Text>}
           {etaLine && <Text color={finished ? 'success' : 'claude'}>{etaLine}</Text>}
         </Box>
