@@ -326,6 +326,28 @@ test('the status line carries the ticket, the step under way, the time left and 
   expect(lines[lines.length - 1]).toBeUndefined()
 })
 
+test('red CI raises the alarm only when no work is running on it', async ($, on) => {
+  const red = JSON.stringify({
+    title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5',
+    statusCheckRollup: [{ name: 'ci-gate', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2025-01-06T09:00:00Z', completedAt: '2025-01-06T09:01:00Z' }],
+  })
+  const clock = engine(on, { gh: a => (a.includes('view') && a.includes('5') ? red : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && gh pr view 5 --json state' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run ship', description: 'Wait for preflight then ship', run_in_background: true })
+  await clock.advance(60000)
+  let v = await view($)
+  expect(await v.text(/^✕ CI$/)).toBe('✕ CI')
+  expect(await v.text(/^(working|something broke)$/)).toBe('working')
+  await v.close()
+  // the background work ends and nothing else runs: now the red is the person's to see
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  await $.turn.complete(reply('Shipped.'))
+  v = await view($)
+  expect(await v.text(/^(working|something broke)$/)).toBe('something broke')
+  await v.close()
+})
+
 // ── motion ───────────────────────────────────────────────────────
 
 test('a background command is filed by its own description, not by words in the command', async ($, on) => {
