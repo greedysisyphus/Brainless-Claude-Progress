@@ -120,14 +120,19 @@ async function finish($: any, id: string, status?: string) {
   if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${x.stage}`, end - x.startedAt)
 }
 
-async function watchPr($: any, number: number, repo: string | undefined, cwd: string) {
-  const t = await read($, ticket)
+// A PR this session opened belongs to the ticket at hand; one it only looks at belongs to whatever
+// its own branch or title names, which the next poll reads.
+async function watchPr($: any, number: number, repo: string | undefined, cwd: string, isOpenedHere: boolean) {
+  const t = isOpenedHere ? (await read($, ticket)) || undefined : undefined
   await update($, prs, all =>
     all.some(p => p.number === number && (!repo || !p.repo || p.repo === repo))
       ? all
-      : [...all, { number, repo, cwd, ticket: t || undefined, checks: [] }].slice(-3),
+      : [...all, { number, repo, cwd, ticket: t, checks: [] }].slice(-3),
   )
 }
+
+// the ticket a PR names in its branch or its title
+export const ticketOfPr = (branch: string, title: string) => ticketOfRef(`/${branch}`) ?? ticketOfName(title)
 
 // A PR's rollup keeps every run of its head commit (a red preflight before the full one):
 // only the newest run of each check counts.
@@ -202,7 +207,7 @@ async function poll($: any) {
 
   for (const pr of await read($, prs)) {
     if (pr.state === 'MERGED' || pr.state === 'CLOSED') continue
-    const argv = ['gh', 'pr', 'view', String(pr.number), '--json', 'title,state,url,statusCheckRollup']
+    const argv = ['gh', 'pr', 'view', String(pr.number), '--json', 'title,state,url,headRefName,statusCheckRollup']
     if (pr.repo) argv.push('-R', pr.repo)
     const run = await $.process.run(argv, { cwd: pr.cwd, timeoutMs: 20000 }).catch(() => undefined)
     if (!run || run.exitCode !== 0) continue
@@ -222,7 +227,7 @@ async function poll($: any) {
     }
     await update($, prs, all =>
       all.map(p => (p.number === pr.number && p.cwd === pr.cwd
-        ? { ...p, repo, title: j.title, state: j.state, checks, polledAt: Date.now() } : p)),
+        ? { ...p, repo, ticket: ticketOfPr(String(j.headRefName ?? ''), String(j.title ?? '')) ?? p.ticket, title: j.title, state: j.state, checks, polledAt: Date.now() } : p)),
     )
   }
 }
@@ -511,10 +516,10 @@ export const register: Register = on => {
     if (t) await update($, ticket, () => t)
 
     const ref = cmd.match(PR_REF)
-    if (ref) await watchPr($, Number(ref[1] ?? ref[2]), cmd.match(REPO_FLAG)?.[1], cwd)
+    if (ref) await watchPr($, Number(ref[1] ?? ref[2]), cmd.match(REPO_FLAG)?.[1], cwd, false)
     const out = String((ran as any).result?.stdout ?? '')
     const url = /\bgh\s+pr\s+create\b|\bgit\s+push\b|\bship\b/.test(cmd) ? out.match(PR_URL) : null
-    if (url) await watchPr($, Number(url[2]), url[1], cwd)
+    if (url) await watchPr($, Number(url[2]), url[1], cwd, true)
 
     const id = (ran as any).result?.backgroundTaskId
     if (id) {

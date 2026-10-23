@@ -75,7 +75,7 @@ It reads only what Claude Code already sees; it sends nothing anywhere except `g
 
 - **The ticket** comes from places that say what the work is: an agent's task name (`Device verify #128`, `Review PROJ-42`), the folder a command `cd`s into (`…/128-small-fixes`), a branch a command creates or pushes (`claude/731-dark-mode`, `feature/PROJ-9-search`), or `gh issue develop 412`. Viewing, commenting on or closing an issue does not switch to it. A number that merely appears inside a command, such as in a file being written, is ignored.
 - **The step** comes from the task's name, in any of the four languages: *review / 審查 / 审查 / レビュー*, *verify / test / QA / 驗證 / 验证 / 検証*, *implement / fix / 寫 / 写 / 実装*. A task named otherwise is listed under Background without a step.
-- **The pull request** comes from `gh pr …` commands and from the PR link printed by `gh pr create` or `git push`.
+- **The pull request** is one the conversation opened (the link printed by `gh pr create` or `git push`), or one it looks at with `gh pr …` whose own branch or title names the ticket. A PR read only for reference does not mark the current ticket merged.
 - **"Your turn"** is a reply that has a heading such as *Decision needed*, *Action required*, *要你決定*, *需要你决定*, *ご判断ください*; or, without one, a reply whose last paragraph is a question. It clears when you send your next message.
 
 ## Limits

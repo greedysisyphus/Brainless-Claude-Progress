@@ -160,8 +160,9 @@ test('CI time counts only the newest run of each check, not the red preflight be
 test('each repository keeps its own CI history, read from its merged PRs', async ($, on) => {
   const clock = engine(on, {
     gh: argv => argv.includes('nameWithOwner') ? 'me/app\n'
-      : argv.includes('list') ? JSON.stringify([{ statusCheckRollup: SAMPLE_ROLLUP }]) : '{}',
-    store: { 'dur:ci:other/site:total': [2 * 60000] },
+      : argv.includes('list') ? JSON.stringify([{ statusCheckRollup: SAMPLE_ROLLUP }])
+      : argv.includes('view') ? JSON.stringify({ title: 'Site fix', state: 'OPEN', url: 'https://github.com/other/site/pull/5', headRefName: 'me/128-site', statusCheckRollup: [] }) : '{}',
+    store: { 'dur:ci:other/site:total': [2 * 60000], 'seeded:other/site': true },
   })
   await start($)
   await verify($)
@@ -177,6 +178,7 @@ test('each repository keeps its own CI history, read from its merged PRs', async
 
   // a PR in the other repository is estimated from that repository's own history
   await $.tool.call({ tool: 'Bash', command: 'gh pr view 5 -R other/site --json state' })
+  await clock.advance(60000)
   v = await view($)
   expect(await v.text(/^(Done|At least)/)).toBe('At least ~2 min more (no history yet for Verify)')
   await v.close()
@@ -364,7 +366,7 @@ test('in auto mode the band shows the ticket, the step, the time and your turn o
 
 test('red CI raises the alarm only when no work is running on it', async ($, on) => {
   const red = JSON.stringify({
-    title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5',
+    title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-small-fixes',
     statusCheckRollup: [{ name: 'ci-gate', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2025-01-06T09:00:00Z', completedAt: '2025-01-06T09:01:00Z' }],
   })
   const clock = engine(on, { gh: a => (a.includes('view') && a.includes('5') ? red : a.includes('nameWithOwner') ? 'me/app' : '[]') })
@@ -400,7 +402,7 @@ test('a failure from the run before a rerun waits for its own rerun instead of c
 })
 
 test('a run that has only queued its quick checks is estimated as a whole run, not as those checks', async ($, on) => {
-  const view_ = JSON.stringify({ title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5', statusCheckRollup: RERUN })
+  const view_ = JSON.stringify({ title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-small-fixes', statusCheckRollup: RERUN })
   const clock = engine(on, {
     store: { 'dur:ci:me/app:total': [18 * 60000], 'dur:ci:me/app:changes': [6000], 'dur:ci:me/app:ci-gate': [6000], 'seeded:me/app': true },
     gh: a => (a.includes('view') && a.includes('5') ? view_ : a.includes('nameWithOwner') ? 'me/app' : '[]'),
@@ -417,7 +419,7 @@ test('a run that has only queued its quick checks is estimated as a whole run, n
 })
 
 test('a ticket named with nothing under it gives way to the one whose PR is running', async ($, on) => {
-  const running = JSON.stringify({ title: 'Small fixes', state: 'OPEN', url: 'https://github.com/me/app/pull/5', statusCheckRollup: [{ name: 'test', status: 'IN_PROGRESS', conclusion: '', startedAt: '2025-01-06T09:10:00Z', completedAt: '0001-01-01T00:00:00Z' }] })
+  const running = JSON.stringify({ title: 'Small fixes', state: 'OPEN', url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-small-fixes', statusCheckRollup: [{ name: 'test', status: 'IN_PROGRESS', conclusion: '', startedAt: '2025-01-06T09:10:00Z', completedAt: '0001-01-01T00:00:00Z' }] })
   const clock = engine(on, { gh: a => (a.includes('view') && a.includes('5') ? running : a.includes('nameWithOwner') ? 'me/app' : '[]') })
   await start($)
   await $.tool.call({ tool: 'Bash', command: 'cd /w/128-small-fixes && gh pr view 5 --json state' })
@@ -451,7 +453,7 @@ test('the band is on by default beside the pane, /progress bar off leaves it to 
 
 test('after the PR merges, an empty follow-up ticket does not take over, and has no estimate of its own', async ($, on) => {
   let state = 'OPEN'
-  const pr = () => JSON.stringify({ title: 'Small fixes', state, url: 'https://github.com/me/app/pull/5', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2025-01-06T09:10:00Z', completedAt: '2025-01-06T09:28:00Z' }] })
+  const pr = () => JSON.stringify({ title: 'Small fixes', state, url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-small-fixes', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2025-01-06T09:10:00Z', completedAt: '2025-01-06T09:28:00Z' }] })
   const clock = engine(on, { store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('view') && a.includes('5') ? pr() : a.includes('nameWithOwner') ? 'me/app' : '[]') })
   await start($)
   await $.tool.call({ tool: 'Bash', command: 'cd /w/128-small-fixes && gh pr view 5 --json state' })
@@ -471,6 +473,26 @@ test('a ticket with nothing under it shows no estimate', async ($, on) => {
   const v = await view($)
   expect(await v.text(/^#130$/)).toBe('#130')
   expect(await v.text(/(Done|At least|work left)/)).toBeFalsy()
+  await v.close()
+})
+
+test('a PR only looked at belongs to the ticket its own branch names, not to the one at hand', async ($, on) => {
+  const old = JSON.stringify({ title: 'Brand colors', state: 'MERGED', url: 'https://github.com/me/app/pull/90', headRefName: 'me/90-brand', statusCheckRollup: [] })
+  const clock = engine(on, { gh: a => (a.includes('view') && a.includes('90') ? old : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Agent', description: 'Writer stage 1 for #132', prompt: 'go', run_in_background: true } as any)
+  // read for reference while #132 is being written
+  await $.tool.call({ tool: 'Bash', command: 'gh pr view 90 --json files' })
+  // before the next poll reads its branch, the PR is no one's
+  const early = await view($)
+  expect(await early.text(/PR #90/)).toBeFalsy()
+  await early.close()
+  await clock.advance(60000)
+  const v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#132')
+  expect(await v.text(/^Done$/)).toBeFalsy()
+  expect(await v.text(/Merge/)).toBe('○ Merge')
+  expect(await v.text(/PR #90/)).toBeFalsy()
   await v.close()
 })
 
