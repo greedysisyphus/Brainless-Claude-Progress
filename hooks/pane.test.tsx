@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { ciTotal, latestRuns, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { ciTotal, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -174,13 +174,13 @@ test('the language follows Claude Code’s setting, else the person’s writing,
   expect(await v.text(/^Background$/)).toBe('Background')
   await v.close()
 
-  await $.prompt.submit({ text: '幫我看一下這個畫面' } as any)
+  await $.prompt.submit({ text: '幫我看一下這個畫面', origin: { kind: 'composer' } } as any)
   v = await view($)
   expect(await v.text(/^背景工作$/)).toBe('背景工作')
   await v.close()
 
   await $.command.run({ command: 'progress', args: 'lang ja' } as any)
-  await $.prompt.submit({ text: 'please check again' } as any)
+  await $.prompt.submit({ text: 'please check again', origin: { kind: 'composer' } } as any)
   v = await view($)
   // a choice the person made outranks what they happen to type next
   expect(await v.text(/^バックグラウンド$/)).toBe('バックグラウンド')
@@ -209,10 +209,34 @@ test('a running agent named for a ticket makes it the current ticket when nothin
   await v.close()
 })
 
+test('a notification is not the person: it neither changes the language nor clears a waiting decision', async ($, on) => {
+  engine(on, { history: ['幫我看一下這個畫面', '可以', '改好了嗎？', 'Another Claude session sent a message: the build finished on main'] })
+  await start($)
+  await $.turn.complete(reply('要你決定：今天合併嗎？'))
+  await $.prompt.submit({ text: '<task-notification>Background command "Device verify" completed (exit code 0)</task-notification>', origin: { kind: 'task-notification' } } as any)
+  await $.prompt.submit({ text: 'Another Claude session sent a message: review passed with no findings', origin: { kind: 'peer-send-message' } } as any)
+  let v = await view($)
+  expect(await v.text(/^背景工作$/)).toBe('背景工作')
+  expect(await v.text(/今天合併/)).toBe('今天合併嗎？')
+  await v.close()
+  // the person's own words through Remote Control do count
+  await $.prompt.submit({ text: 'ok go ahead and merge it today please', origin: { kind: 'bridge' } } as any)
+  v = await view($)
+  expect(await v.text(/^Background$/)).toBe('Background')
+  expect(await v.text(/今天合併/)).toBeFalsy()
+  await v.close()
+})
+
+test('the starting language is the one most recent messages are in, ties to the latest', async () => {
+  expect(mostOf(['zh-Hant', 'zh-Hant', 'en'])).toBe('zh-Hant')
+  expect(mostOf(['en', 'zh-Hant'])).toBe('zh-Hant')
+  expect(mostOf([])).toBeUndefined()
+})
+
 test('Claude Code’s language setting outranks what the person types', async ($, on) => {
   engine(on, { language: 'Simplified Chinese' })
   await start($)
-  await $.prompt.submit({ text: 'please look at the failing build' } as any)
+  await $.prompt.submit({ text: 'please look at the failing build', origin: { kind: 'composer' } } as any)
   const v = await view($)
   expect(await v.text(/^后台任务$/)).toBe('后台任务')
   await v.close()
@@ -236,9 +260,21 @@ test('an unanswered decision survives a later reply without one, and clears when
   let v = await view($)
   expect(await v.text(/merge today/)).toBe('merge today?')
   await v.close()
-  await $.prompt.submit({ text: 'yes merge it' } as any)
+  await $.prompt.submit({ text: 'yes merge it', origin: { kind: 'composer' } } as any)
   v = await view($)
   expect(await v.text(/merge today/)).toBeFalsy()
+  await v.close()
+})
+
+test('with nothing under way the estimate says it waits for the next step (the 18 minutes after Verify finished)', async ($, on) => {
+  const clock = engine(on, { store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: x => (x.includes('nameWithOwner') ? 'me/app' : '{}') })
+  await start($)
+  await clock.advance(6000)
+  await verify($)
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>a1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  const v = await view($)
+  expect(await v.text(/Verify/)).toBe('✓ Verify')
+  expect(await v.text(/18 min/)).toBe('~18 min of work left, once the next step starts')
   await v.close()
 })
 
