@@ -13,6 +13,10 @@ type Strings = {
   barUnknown: string
   ticket: string
   noTicket: string
+  doing: (what: string) => string
+  thisTurn: (n: number) => string
+  todoDone: (done: number, all: number) => string
+  tools: Record<string, string>
   write: string
   review: string
   verify: string
@@ -57,6 +61,10 @@ export const STRINGS: Record<Lang, Strings> = {
     barUnknown: 'Bar: always, auto or off.',
     ticket: 'Current ticket',
     noTicket: 'No ticket recognized yet',
+    doing: x => `Now: ${x}`,
+    thisTurn: n => (n < 1 ? 'this turn: just started' : `this turn: ${n} min`),
+    todoDone: (d, a) => `${d}/${a} done`,
+    tools: { Read: 'Reading', Edit: 'Editing', Write: 'Writing', Grep: 'Searching', Glob: 'Finding files', WebSearch: 'Searching the web', WebFetch: 'Reading a page', Skill: 'Loading a skill' },
     write: 'Write',
     review: 'Review',
     verify: 'Verify',
@@ -99,6 +107,10 @@ export const STRINGS: Record<Lang, Strings> = {
     barUnknown: '進度列：always、auto 或 off。',
     ticket: '目前的票',
     noTicket: '還沒認出票號',
+    doing: x => `目前：${x}`,
+    thisTurn: n => (n < 1 ? '這輪剛開始' : `這輪已做 ${n} 分`),
+    todoDone: (d, a) => `${d}/${a} 項完成`,
+    tools: { Read: '讀', Edit: '改', Write: '寫', Grep: '搜尋', Glob: '找檔案', WebSearch: '上網查', WebFetch: '讀網頁', Skill: '載入技能' },
     write: '寫程式',
     review: '審查',
     verify: '上機驗證',
@@ -141,6 +153,10 @@ export const STRINGS: Record<Lang, Strings> = {
     barUnknown: '进度条：always、auto 或 off。',
     ticket: '当前任务',
     noTicket: '还没识别出任务编号',
+    doing: x => `当前：${x}`,
+    thisTurn: n => (n < 1 ? '这轮刚开始' : `这轮已做 ${n} 分`),
+    todoDone: (d, a) => `${d}/${a} 项完成`,
+    tools: { Read: '读', Edit: '改', Write: '写', Grep: '搜索', Glob: '找文件', WebSearch: '上网查', WebFetch: '读网页', Skill: '加载技能' },
     write: '写代码',
     review: '审查',
     verify: '验证',
@@ -183,6 +199,10 @@ export const STRINGS: Record<Lang, Strings> = {
     barUnknown: '進捗バー：always、auto、off のいずれか。',
     ticket: '現在のチケット',
     noTicket: 'チケット番号はまだ見つかっていません',
+    doing: x => `作業中：${x}`,
+    thisTurn: n => (n < 1 ? 'このターン：開始したばかり' : `このターン：${n} 分`),
+    todoDone: (d, a) => `${d}/${a} 件完了`,
+    tools: { Read: '読む', Edit: '編集', Write: '書く', Grep: '検索', Glob: 'ファイル検索', WebSearch: 'ウェブ検索', WebFetch: 'ページを読む', Skill: 'スキル読み込み' },
     write: '実装',
     review: 'レビュー',
     verify: '検証',

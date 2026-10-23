@@ -29,6 +29,9 @@ export type PrWatch = {
 
 export type Turn = 'working' | 'asking' | 'idle'
 
+/** an item of Claude's own to-do list (TodoWrite, or TaskCreate and TaskUpdate) */
+export type Todo = { id: string; text: string; status: 'pending' | 'in_progress' | 'completed' }
+
 /** '' while the language is still worked out ('auto') */
 export type LangPick = '' | 'en' | 'zh-Hant' | 'zh-Hans' | 'ja'
 
@@ -53,6 +56,14 @@ declare module 'claude-code' {
       said: ('en' | 'zh-Hant' | 'zh-Hans' | 'ja')[]
       /** the band above the prompt: always, only while the pane is hidden, or never */
       bar: 'always' | 'auto' | 'off'
+      /** Claude's to-do list, as its last TodoWrite or Task calls left it */
+      todos: Todo[]
+      /** the main loop's latest tool call: its own description (tool '') or a tool and what it works on; text '' between turns */
+      doing: { tool: string; text: string }
+      /** when the main loop's current turn started; 0 between turns */
+      turnAt: number
+      /** the folder and branch the session runs in, shown where no ticket is known */
+      place: string
     }
   }
 }

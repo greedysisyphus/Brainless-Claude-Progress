@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { checksOf, ciTotal, isPerson, labelOf, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { activityOf, checksOf, ciTotal, isPerson, labelOf, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -27,9 +27,11 @@ function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]
   on('session.messages', () => ({ value: (opts.history ?? []).map(text => ({ role: 'user', text, toolUses: [] })) }))
   on('agent.list', () => ({ value: opts.agents ?? [] }))
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
+  on('turn.start', (_: any, e: any) => ({ turnId: e.turnId ?? 't' }))
   on('prompt.submit', (_: any, e: any) => ({ text: e.text }))
   on('process.run', (_: any, e: any) => {
     // git: any folder is its own work tree except a scratch one (named "...-shots")
+    if (e.argv[0] === 'git' && e.argv.includes('--abbrev-ref')) return { value: { exitCode: 0, stdout: 'main\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     if (e.argv[0] === 'git' && e.argv.includes('rev-parse')) {
       const dir = String(e.argv[2])
       return { value: { exitCode: /shots/.test(dir) ? 128 : 0, stdout: /shots/.test(dir) ? '' : dir.replace(/\/src$/, '') + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -39,6 +41,7 @@ function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]
   on('tool.call', (_: any, e: any) =>
     e.tool === 'Agent'
       ? { result: { status: 'async_launched', agentId: 'a1' } }
+      : e.tool === 'TaskCreate' ? { result: { task: { id: e.subject, subject: e.subject } } }
       : { result: { stdout: /gh pr create/.test(e.command ?? '') ? opts.prUrl ?? '' : '', stderr: '', interrupted: false, backgroundTaskId: e.run_in_background ? 'b1' : undefined } })
   return clock
 }
@@ -754,5 +757,73 @@ test('each repository keeps its own step times; one with none yet borrows the sh
   await verify($, 'Device verify #129')
   v = await view($)
   expect(await v.text(/min left/)).toBe('just started · ~10 min left')
+  await v.close()
+})
+
+// ── no ticket ────────────────────────────────────────────────────
+
+test('a tool call is told by its own description, else the tool and the file it works on', () => {
+  expect(activityOf({ tool: 'Bash', command: 'npm test', description: 'Run the tests' })).toEqual({ tool: '', text: 'Run the tests' })
+  expect(activityOf({ tool: 'Read', file_path: '/a/src/player.ts' })).toEqual({ tool: 'Read', text: 'player.ts' })
+  expect(activityOf({ tool: 'WebFetch', url: 'https://example.com/a/b' })).toEqual({ tool: 'WebFetch', text: 'https://example.com/a/b' })
+})
+
+test('with no ticket the pane names the folder and branch, says what Claude is doing and for how long', async ($, on) => {
+  const clock = engine(on, { LANG: 'zh_TW.UTF-8' })
+  await start($)
+  await clock.advance(6000)
+  await $.turn.start({ text: '', turnId: 't1' } as any)
+  await clock.advance(3 * 60000)
+  await $.tool.call({ tool: 'Read', file_path: '/w/src/player.ts' } as any)
+  let v = await view($)
+  // the mock session runs in '/', so the folder is empty and the branch names it
+  expect(await v.text(/^main$/)).toBe('main')
+  expect(await v.text(/^目前：/)).toBe('目前：讀 player.ts')
+  expect(await v.text(/^這輪/)).toBe('這輪已做 3 分')
+  expect(await v.text(/還沒認出票號/)).toBeFalsy()
+  await v.close()
+  // a subagent's call is not what the main loop is doing
+  await $.tool.call({ tool: 'Grep', pattern: 'other', agentId: 'sub1' } as any)
+  v = await view($)
+  expect(await v.text(/^目前：/)).toBe('目前：讀 player.ts')
+  await v.close()
+  await $.turn.complete(reply('好了。'))
+  v = await view($)
+  expect(await v.text(/^目前：/)).toBeFalsy()
+  expect(await v.text(/還沒認出票號/)).toBe('還沒認出票號')
+  await v.close()
+})
+
+test('with no ticket Claude’s own to-do list is the progress, from TodoWrite or from Task calls', async ($, on) => {
+  engine(on, { LANG: 'zh_TW.UTF-8' })
+  await start($)
+  await $.turn.start({ text: '', turnId: 't1' } as any)
+  await $.tool.call({ tool: 'TodoWrite', todos: [
+    { content: 'Read the player', status: 'completed', activeForm: 'Reading the player' },
+    { content: 'Write the watch log', status: 'in_progress', activeForm: 'Writing the watch log' },
+    { content: 'Resume playback', status: 'pending', activeForm: 'Resuming playback' },
+  ] } as any)
+  let v = await view($)
+  expect(await v.text(/項完成$/)).toBe('1/3 項完成')
+  expect(await v.text(/^Writing the watch log$/)).toBe('Writing the watch log')
+  expect(await v.text(/^Resume playback$/)).toBe('Resume playback')
+  await v.close()
+  const b = await $.ui.mount({ plugin: 'brainless-claude-progress', component: 'AbovePrompt', surface: 'terminal', props: { hasSurvey: false, isWorking: true, maxRows: 4, bodyColumns: 80, scroll: { offset: 0, bodyRows: 4 }, view: {} } })
+  expect((await b.find({ type: 'Text', text: /項完成$/ }))?.text).toBe('1/3 項完成')
+  await b.unmount()
+})
+
+test('Task calls build and update the same list', async ($, on) => {
+  engine(on, { LANG: 'en_US.UTF-8' })
+  await start($)
+  await $.tool.call({ tool: 'TaskCreate', subject: 'First', description: 'x' } as any)
+  await $.tool.call({ tool: 'TaskCreate', subject: 'Second', description: 'y' } as any)
+  await $.tool.call({ tool: 'TaskUpdate', taskId: 'First', status: 'completed' } as any)
+  let v = await view($)
+  expect(await v.text(/done$/)).toBe('1/2 done')
+  await v.close()
+  await $.tool.call({ tool: 'TaskUpdate', taskId: 'Second', status: 'deleted' } as any)
+  v = await view($)
+  expect(await v.text(/done$/)).toBe('1/1 done')
   await v.close()
 })
