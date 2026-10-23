@@ -658,6 +658,27 @@ export const register: Register = on => {
       return <Text dimColor><Text color={bad ? 'error' : 'success'}>{bad ? '✕' : '✓'}</Text> {fit(x.label, width - 6)}</Text>
     }
 
+    // seated above the prompt (no room to dock): two or three plain lines instead of three cards
+    if ((e.props as any).placement === 'inline') {
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={2}>
+            <Text bold>{title}</Text>
+            {cur || pr
+              ? <Text>{rows.map((x, i) => <Text><Text color={COLOR[x.mark]} dimColor={x.mark === 'none' || x.mark === 'skip'}>{GLYPH[x.mark]} </Text><Text dimColor={x.mark === 'none' || x.mark === 'skip'} bold={x.mark === 'run'}>{x.name}</Text>{i < rows.length - 1 ? <Text dimColor> · </Text> : ''}</Text>)}</Text>
+              : <Text dimColor>{s.noTicket}</Text>}
+          </Box>
+          {(etaLine || live.length > 0) && (
+            <Box flexDirection="row" gap={2}>
+              {etaLine ? <Text color={finished ? 'success' : 'claude'}>{etaLine}</Text> : ''}
+              {live.length ? <Text dimColor>{s.background} · {s.running(live.length)}</Text> : ''}
+            </Box>
+          )}
+          {yourTurn ? <Text><Text bold color="warning">{s.yourTurn}</Text>  {fit(yourTurn, width - s.yourTurn.length - 4)}</Text> : ''}
+        </Box>
+      )
+    }
+
     // each section a quiet rounded card; only the waiting card and the spark take color
     return (
       <Box flexDirection="column" gap={1}>
