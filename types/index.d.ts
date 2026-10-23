@@ -64,6 +64,10 @@ declare module 'claude-code' {
       turnAt: number
       /** the folder and branch the session runs in, shown where no ticket is known */
       place: string
+      /** the main loop's failed tool calls in a row, and what the last one did; reset by a success or a new turn */
+      fails: { n: number; text: string }
+      /** the files the main loop edited or wrote this turn, by name; kept after the turn ends until the next starts */
+      touched: string[]
     }
   }
 }
