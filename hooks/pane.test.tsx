@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { ciTotal, latestRuns, mostOf, sparkFor, statusLine, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { checksOf, ciTotal, latestRuns, mostOf, sparkFor, statusLine, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -125,6 +125,8 @@ test('steps are told apart in four languages', async () => {
   expect(['Implement search', 'Fix the crash', '寫程式', '实现搜索', '実装する'].map(stageOf)).toEqual(['write', 'write', 'write', 'write', 'write'])
   expect(['Run full local CI and typecheck', 'npm run lint', 'tsc --noEmit'].map(stageOf)).toEqual(['verify', 'verify', 'verify'])
   expect(stageOf('Explore the codebase')).toBe('other')
+  // waiting on a step is not doing it
+  expect(['Wait for required-ci and the review', 'Wait for preflight then run ship', '等 CI 跑完', '等待审查结果', 'CI の完了を待つ'.replace(/^/, '待機: ')].map(stageOf)).toEqual(['other', 'other', 'other', 'other', 'other'])
 })
 
 // ── CI ───────────────────────────────────────────────────────────
@@ -167,7 +169,7 @@ test('the ticket, a learned estimate, a task and a waiting decision, drawn on tw
   engine(on, { store: { 'dur:stage:verify': [10 * 60000] } })
   await start($)
   await verify($)
-  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && codex exec review', description: 'Wait for Codex review', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && codex exec review', description: 'Codex review', run_in_background: true })
   await $.turn.complete(reply('Done.\n\n**Decision needed:** Accept the two trade-offs?'))
   for (const surface of ['terminal', 'desktop'] as const) {
     const v = await view($, surface)
@@ -345,6 +347,38 @@ test('red CI raises the alarm only when no work is running on it', async ($, on)
   await $.turn.complete(reply('Shipped.'))
   v = await view($)
   expect(await v.text(/^(working|something broke)$/)).toBe('something broke')
+  await v.close()
+})
+
+// A rerun seconds after it began: the quick checks are queued, the long one still shows the last run's failure.
+const RERUN = [
+  { name: 'test', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2025-01-06T09:00:00Z', completedAt: '2025-01-06T09:01:20Z' },
+  { name: 'ci-gate', status: 'COMPLETED', conclusion: 'FAILURE', startedAt: '2025-01-06T09:00:00Z', completedAt: '2025-01-06T09:01:30Z' },
+  { name: 'changes', status: 'QUEUED', conclusion: '', startedAt: '2025-01-06T09:10:00Z', completedAt: '0001-01-01T00:00:00Z' },
+  { name: 'ci-gate', status: 'QUEUED', conclusion: '', startedAt: '2025-01-06T09:10:10Z', completedAt: '0001-01-01T00:00:00Z' },
+]
+
+test('a failure from the run before a rerun waits for its own rerun instead of counting as failed', async () => {
+  const states = Object.fromEntries(checksOf(latestRuns(RERUN)).map(c => [c.name, c.state]))
+  expect(states).toEqual({ test: 'pending', 'ci-gate': 'pending', changes: 'pending' })
+  // with no newer run, a failure is a failure
+  expect(checksOf(latestRuns(RERUN.slice(0, 2))).map(c => c.state)).toEqual(['fail', 'fail'])
+})
+
+test('a run that has only queued its quick checks is estimated as a whole run, not as those checks', async ($, on) => {
+  const view_ = JSON.stringify({ title: 'Fix login', state: 'OPEN', url: 'https://github.com/me/app/pull/5', statusCheckRollup: RERUN })
+  const clock = engine(on, {
+    store: { 'dur:ci:me/app:total': [18 * 60000], 'dur:ci:me/app:changes': [6000], 'dur:ci:me/app:ci-gate': [6000], 'seeded:me/app': true },
+    gh: a => (a.includes('view') && a.includes('5') ? view_ : a.includes('nameWithOwner') ? 'me/app' : '[]'),
+  })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && gh pr view 5 --json state' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run ship', description: 'Ship it', run_in_background: true })
+  await clock.advance(60000)
+  const v = await view($)
+  expect(await v.text(/CI/)).toMatch(/^[·✢✳✶✻✽] CI/)
+  // the run began at 09:10 and the mock clock is far past it: the floor is one minute, never the quick checks' six seconds
+  expect(await v.text(/^Done in/)).toMatch(/^Done in ~\d+ min/)
   await v.close()
 })
 

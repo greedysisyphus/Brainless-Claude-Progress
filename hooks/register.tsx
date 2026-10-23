@@ -87,7 +87,9 @@ export function ticketOfCommand(cmd: string): string | undefined {
 
 // ponytail: keyword match on the task's own words, four languages; a task named otherwise lands in 'other'
 export const stageOf = (s: string): Stage =>
-  /review|審查|审查|レビュー|審閱|审阅|codex/i.test(s) ? 'review'
+  // a task that only waits on something else does no step's work and must not time one
+  /^\s*(wait(ing)? (for|on|until)|poll|watch)\b|^\s*(等待|等到|等)|^\s*(待つ|待機)/i.test(s) ? 'other'
+    : /review|審查|审查|レビュー|審閱|审阅|codex/i.test(s) ? 'review'
     : /verif|device|\bqa\b|\btest|e2e|simulator|\bci\b|ci:local|typecheck|type-check|\btsc\b|\blint|驗證|验证|驗機|上機|上机|測試|测试|検証|確認|テスト/i.test(s) ? 'verify'
     : /writ|implement|\bfix|build|refactor|寫|写|修|實作|实现|実装|修正/i.test(s) ? 'write' : 'other'
 
@@ -173,6 +175,23 @@ async function seedCi($: any, cwd: string, repo: string) {
   await $.store.set(`seeded:${repo}`, true)
 }
 
+// Each check's state. A failure that ended before a check of a newer run started belongs
+// to the run before: until its own re-run appears it counts as pending, not failed.
+export function checksOf(roll: any[]): CheckRun[] {
+  const raw = roll.map((c: any) => {
+    const done = c.status === 'COMPLETED' || c.state === 'SUCCESS' || c.state === 'FAILURE' || c.state === 'ERROR'
+    const ok = c.conclusion === 'SUCCESS' || c.conclusion === 'SKIPPED' || c.conclusion === 'NEUTRAL' || c.state === 'SUCCESS'
+    return {
+      name: c.name ?? c.context ?? '?',
+      state: (!done ? 'pending' : ok ? 'pass' : 'fail') as CheckRun['state'],
+      startedAt: c.startedAt ? Date.parse(c.startedAt) : undefined,
+      endedAt: done && c.completedAt && !String(c.completedAt).startsWith('0001') ? Date.parse(c.completedAt) : undefined,
+    }
+  })
+  const newRun = Math.max(0, ...raw.filter(c => c.state === 'pending').map(c => c.startedAt ?? 0))
+  return raw.map(({ endedAt, ...c }) => (c.state === 'fail' && endedAt && endedAt < newRun ? { ...c, state: 'pending' } : c))
+}
+
 async function poll($: any) {
   // a subagent whose notification we missed still ends: settle it from the engine's list
   const agents = ((await $.agent.list().catch(() => [])) as any[])
@@ -189,15 +208,7 @@ async function poll($: any) {
     const repo = pr.repo ?? String(j.url ?? '').match(PR_URL)?.[1]
     if (repo) await seedCi($, pr.cwd, repo)
     const roll = latestRuns(j.statusCheckRollup ?? [])
-    const checks: CheckRun[] = roll.map((c: any) => {
-      const done = c.status === 'COMPLETED' || c.state === 'SUCCESS' || c.state === 'FAILURE' || c.state === 'ERROR'
-      const ok = c.conclusion === 'SUCCESS' || c.conclusion === 'SKIPPED' || c.conclusion === 'NEUTRAL' || c.state === 'SUCCESS'
-      return {
-        name: c.name ?? c.context ?? '?',
-        state: !done ? 'pending' : ok ? 'pass' : 'fail',
-        startedAt: c.startedAt ? Date.parse(c.startedAt) : undefined,
-      }
-    })
+    const checks = checksOf(roll)
     for (const c of roll) {
       const before = pr.checks.find(x => x.name === (c.name ?? c.context))
       if (before?.state === 'pending' && c.status === 'COMPLETED' && c.startedAt && c.completedAt)
@@ -297,6 +308,10 @@ async function viewOf($: any) {
       const prior = await past($, ciKey(repo, c.name))
       if (prior.length && c.startedAt) eta = Math.max(eta, median(prior) - (t - c.startedAt))
     }
+    // a run that has only queued its quick checks so far still takes as long as a whole run
+    const whole = median(await past($, ciKey(repo, 'total')))
+    const runStart = Math.min(...pend.map(c => c.startedAt ?? t))
+    if (pend.length && whole) eta = Math.max(eta, whole - (t - runStart), 60000)
     const n = pr.checks.length
     if (n) bar = '▰'.repeat(Math.round((pass.length / n) * 6)) + '▱'.repeat(6 - Math.round((pass.length / n) * 6))
     ci = fail.length ? { name: 'CI', mark: 'fail', note: s.failed(fail.length), isCi: true }
