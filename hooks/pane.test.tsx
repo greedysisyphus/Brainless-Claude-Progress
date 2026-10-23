@@ -13,7 +13,8 @@ const PANE = {
 function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]; panes?: () => unknown[]; history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
   mock.store(on, opts.store ?? {})
   mock.env(on, { LANG: opts.LANG ?? 'en_US.UTF-8' })
-  const clock = mock.clock(on)
+  // a real moment, just after the sample CI runs began: the pane reads 0 as "started before we watched"
+  const clock = mock.clock(on, { now: Date.parse('2025-01-06T09:12:00Z') })
   on('settings.read', () => ({ value: opts.language ? { language: opts.language } : {} }))
   on('command.register', () => ({ value: { command: 'progress' } }))
   on('command.run', (_: any, e: any) => ({ text: e.args }))
@@ -518,6 +519,34 @@ test('a merged PR whose branch was never read is read once more, and leaves a ti
   expect(polls).toBe(2)
   v = await view($)
   expect(await v.text(/PR #90/)).toBeFalsy()
+  await v.close()
+})
+
+test('a step running past its usual time says so instead of sitting at one minute left (the writer at 16 of 9 minutes)', async ($, on) => {
+  const clock = engine(on, { LANG: 'zh_TW.UTF-8', store: { 'dur:stage:write': [9 * 60000], 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await clock.advance(6000)
+  await $.tool.call({ tool: 'Agent', description: 'Writer stage 1 for #132', prompt: 'go', run_in_background: true } as any)
+  let v = await view($)
+  expect(await v.text(/約剩/)).toBe('剛開始 · 約剩 9 分')
+  await v.close()
+  await clock.advance(16 * 60000)
+  v = await view($)
+  expect(await v.text(/平常/)).toBe('16 分 · 平常約 9 分')
+  expect(await v.text(/約剩/)).toBeFalsy()
+  expect(await v.text(/^預計完成/)).toBe('預計完成：至少還要約 18 分（寫程式比平常久）（另有 2 步還沒資料）')
+  await v.close()
+})
+
+test('a finished step teaches the next one how long it takes', async ($, on) => {
+  const clock = engine(on)
+  await start($)
+  await verify($)
+  await clock.advance(7 * 60000)
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>a1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  await $.tool.call({ tool: 'Agent', description: 'Device verify #128 again', prompt: 'go', run_in_background: true } as any)
+  const v = await view($)
+  expect(await v.text(/min left/)).toBe('just started · ~7 min left')
   await v.close()
 })
 
