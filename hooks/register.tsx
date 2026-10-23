@@ -88,7 +88,7 @@ export function ticketOfCommand(cmd: string): string | undefined {
 // ponytail: keyword match on the task's own words, four languages; a task named otherwise lands in 'other'
 export const stageOf = (s: string): Stage =>
   /review|審查|审查|レビュー|審閱|审阅|codex/i.test(s) ? 'review'
-    : /verif|device|\bqa\b|\btest|e2e|simulator|驗證|验证|驗機|上機|上机|測試|测试|検証|確認|テスト/i.test(s) ? 'verify'
+    : /verif|device|\bqa\b|\btest|e2e|simulator|\bci\b|ci:local|typecheck|type-check|\btsc\b|\blint|驗證|验证|驗機|上機|上机|測試|测试|検証|確認|テスト/i.test(s) ? 'verify'
     : /writ|implement|\bfix|build|refactor|寫|写|修|實作|实现|実装|修正/i.test(s) ? 'write' : 'other'
 
 const STAGES: Stage[] = ['write', 'review', 'verify']
@@ -368,7 +368,7 @@ export const register: Register = on => {
     const id = (ran as any).result?.backgroundTaskId
     if (id) {
       const label = e.description ?? cmd.slice(0, 40)
-      const task: BgTask = { id, label, kind: 'bash', stage: stageOf(`${label} ${cmd}`), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: Date.now() }
+      const task: BgTask = { id, label, kind: 'bash', stage: stageOf(e.description ?? cmd), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: Date.now() }
       await update($, bg, all => [...all, task].slice(-10))
     }
     return ran
