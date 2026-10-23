@@ -9,6 +9,8 @@ type Strings = {
   motionOff: string
   langSet: (name: string) => string
   langUnknown: string
+  barSet: { always: string; auto: string; off: string }
+  barUnknown: string
   ticket: string
   noTicket: string
   write: string
@@ -48,6 +50,8 @@ export const STRINGS: Record<Lang, Strings> = {
     motionOff: 'Progress pane: animation off.',
     langSet: n => `Progress pane language: ${n}.`,
     langUnknown: 'Languages: en, zh-Hant, zh-Hans, ja, or auto.',
+    barSet: { always: 'Progress bar under the prompt: always on.', auto: 'Progress bar under the prompt: only while the pane is hidden.', off: 'Progress bar under the prompt: off.' },
+    barUnknown: 'Bar: always, auto or off.',
     ticket: 'Current ticket',
     noTicket: 'No ticket recognized yet',
     write: 'Write',
@@ -85,6 +89,8 @@ export const STRINGS: Record<Lang, Strings> = {
     motionOff: '進度面板：動畫已關閉。',
     langSet: n => `進度面板語言：${n}。`,
     langUnknown: '可用語言：en、zh-Hant、zh-Hans、ja，或 auto。',
+    barSet: { always: '輸入框下方的進度列：一直顯示。', auto: '輸入框下方的進度列：面板沒顯示時才出現。', off: '輸入框下方的進度列：已關閉。' },
+    barUnknown: '進度列：always、auto 或 off。',
     ticket: '目前的票',
     noTicket: '還沒認出票號',
     write: '寫程式',
@@ -122,6 +128,8 @@ export const STRINGS: Record<Lang, Strings> = {
     motionOff: '进度面板：动画已关闭。',
     langSet: n => `进度面板语言：${n}。`,
     langUnknown: '可用语言：en、zh-Hant、zh-Hans、ja，或 auto。',
+    barSet: { always: '输入框下方的进度条：一直显示。', auto: '输入框下方的进度条：面板没显示时才出现。', off: '输入框下方的进度条：已关闭。' },
+    barUnknown: '进度条：always、auto 或 off。',
     ticket: '当前任务',
     noTicket: '还没识别出任务编号',
     write: '写代码',
@@ -159,6 +167,8 @@ export const STRINGS: Record<Lang, Strings> = {
     motionOff: '進捗パネル：アニメーションをオフにしました。',
     langSet: n => `進捗パネルの言語：${n}。`,
     langUnknown: '使える言語：en、zh-Hant、zh-Hans、ja、または auto。',
+    barSet: { always: '入力欄の下の進捗バー：常に表示。', auto: '入力欄の下の進捗バー：パネルが非表示のときだけ表示。', off: '入力欄の下の進捗バー：オフ。' },
+    barUnknown: '進捗バー：always、auto、off のいずれか。',
     ticket: '現在のチケット',
     noTicket: 'チケット番号はまだ見つかっていません',
     write: '実装',
