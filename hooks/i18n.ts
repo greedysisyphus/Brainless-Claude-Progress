@@ -27,6 +27,7 @@ type Strings = {
   eta: (n: number) => string
   after: (step: string, n: number) => string
   pending: (n: number) => string
+  shortPending: (n: number) => string
   short: (n: number) => string
   slow: (step: string, n: number) => string
   usually: (n: number) => string
@@ -73,6 +74,7 @@ export const STRINGS: Record<Lang, Strings> = {
     slow: (x, n) => `At least ~${n} min more (${x} is taking longer than usual)`,
     usually: n => `usually ~${n} min`,
     pending: n => `~${n} min of work left, once the next step starts`,
+    shortPending: n => `~${n} min once next starts`,
     noHistory: n => ` (${n} step${n === 1 ? '' : 's'} without history yet)`,
     learning: 'Done in: still learning, needs a few finished runs',
     background: 'Background',
@@ -114,6 +116,7 @@ export const STRINGS: Record<Lang, Strings> = {
     slow: (x, n) => `預計完成：至少還要約 ${n} 分（${x}比平常久）`,
     usually: n => `平常約 ${n} 分`,
     pending: n => `還要約 ${n} 分（等下一步開始）`,
+    shortPending: n => `等下一步・約 ${n} 分`,
     noHistory: n => `（另有 ${n} 步還沒資料）`,
     learning: '預計完成：還在學，跑完幾張票後才算得出來',
     background: '背景工作',
@@ -155,6 +158,7 @@ export const STRINGS: Record<Lang, Strings> = {
     slow: (x, n) => `预计完成：至少还要约 ${n} 分钟（${x}比平时久）`,
     usually: n => `平时约 ${n} 分钟`,
     pending: n => `还需约 ${n} 分钟（等下一步开始）`,
+    shortPending: n => `等下一步・约 ${n} 分钟`,
     noHistory: n => `（另有 ${n} 步还没有数据）`,
     learning: '预计完成：还在学习，跑完几次后才能估算',
     background: '后台任务',
@@ -196,6 +200,7 @@ export const STRINGS: Record<Lang, Strings> = {
     slow: (x, n) => `完了予定：少なくとも約 ${n} 分（${x}がいつもより長引いています）`,
     usually: n => `通常は約 ${n} 分`,
     pending: n => `残り約 ${n} 分（次のステップの開始待ち）`,
+    shortPending: n => `次の開始待ち・約 ${n} 分`,
     noHistory: n => `（ほかに ${n} ステップは実績なし）`,
     learning: '完了予定：学習中。何回か完了すると見積もれます',
     background: 'バックグラウンド',
