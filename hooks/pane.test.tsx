@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { ciTotal, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { ciTotal, latestRuns, mostOf, sparkFor, statusLine, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -10,7 +10,7 @@ const PANE = {
 } as const
 
 // the engine beneath the mod, as each test needs it
-function engine(on: any, opts: { history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
+function engine(on: any, opts: { status?: (string | undefined)[]; panes?: () => unknown[]; history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
   mock.store(on, opts.store ?? {})
   mock.env(on, { LANG: opts.LANG ?? 'en_US.UTF-8' })
   const clock = mock.clock(on)
@@ -20,6 +20,8 @@ function engine(on: any, opts: { history?: string[]; agents?: unknown[]; store?:
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_: any, e: any) => ({ cwd: e.cwd }))
   on('session.cwd', () => ({ value: '/' }))
+  on('ui.panes', () => ({ value: opts.panes?.() ?? [] }))
+  on('ui.status', (_: any, e: any) => { opts.status?.push(e.text); return { value: undefined } })
   on('session.messages', () => ({ value: (opts.history ?? []).map(text => ({ role: 'user', text, toolUses: [] })) }))
   on('agent.list', () => ({ value: opts.agents ?? [] }))
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
@@ -143,19 +145,19 @@ test('each repository keeps its own CI history, read from its merged PRs', async
   await start($)
   await verify($)
   let v = await view($)
-  expect(await v.text(/^Done/)).toBe('Done in: still learning, needs a few finished runs')
+  expect(await v.text(/^Done in:/)).toBe('Done in: still learning, needs a few finished runs')
   await v.close()
 
   await clock.advance(6000)
   v = await view($)
   // me/app's 17 minutes, not other/site's 2
-  expect(await v.text(/^Done/)).toBe('Done ~17 min after Verify finishes')
+  expect(await v.text(/^(Done|At least)/)).toBe('At least ~17 min more (no history yet for Verify)')
   await v.close()
 
   // a PR in the other repository is estimated from that repository's own history
   await $.tool.call({ tool: 'Bash', command: 'gh pr view 5 -R other/site --json state' })
   v = await view($)
-  expect(await v.text(/^Done/)).toBe('Done ~2 min after Verify finishes')
+  expect(await v.text(/^(Done|At least)/)).toBe('At least ~2 min more (no history yet for Verify)')
   await v.close()
 })
 
@@ -172,7 +174,7 @@ test('the ticket, a learned estimate, a task and a waiting decision, drawn on tw
     expect(await v.text(/^#128$/)).toBe('#128')
     expect(await v.text(/~10 min left/)).toContain('just started')
     // review runs with no history, so the count starts when it ends; write, unseen before it, is not waited for
-    expect(await v.text(/^Done/)).toBe('Done ~10 min after Review finishes (1 step without history yet)')
+    expect(await v.text(/^(Done|At least)/)).toBe('At least ~10 min more (no history yet for Review) (1 step without history yet)')
     expect(await v.text(/Write/)).toBe('– Write')
     expect(await v.text(/Device verify/)).toContain('Device verify #128')
     expect(await v.text(/trade-offs/)).toBe('Accept the two trade-offs?')
@@ -293,15 +295,35 @@ test('with nothing under way the estimate says it waits for the next step (the 1
 })
 
 test('a running step with no history does not pose as a countdown (the 18 minutes that never moved)', async ($, on) => {
-  const clock = engine(on, { LANG: 'zh_TW.UTF-8', store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('nameWithOwner') ? 'me/app' : '{}') })
+  const lines: (string | undefined)[] = []
+  const clock = engine(on, { status: lines, LANG: 'zh_TW.UTF-8', store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('nameWithOwner') ? 'me/app' : '{}') })
   await start($)
   await clock.advance(6000)
   await verify($)
   const v = await view($)
-  expect(await v.text(/^預計完成/)).toBe('預計完成：上機驗證做完後再約 18 分')
+  expect(await v.text(/^預計完成/)).toBe('預計完成：至少還要約 18 分（上機驗證還沒有歷史資料）')
   expect(await v.text(/寫程式/)).toBe('– 寫程式')
   expect(await v.text(/審查/)).toBe('– 審查')
   await v.close()
+  // the status line says the same: a floor, not a countdown
+  await $.turn.complete(reply('still running'))
+  expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · ≥ 約 18 分')
+})
+
+test('the status line carries the ticket, the step under way, the time left and your turn — only while the pane is off screen', async ($, on) => {
+  const lines: (string | undefined)[] = []
+  let shown = false
+  const clock = engine(on, {
+    LANG: 'zh_TW.UTF-8', store: { 'dur:stage:verify': [10 * 60000] }, status: lines,
+    panes: () => [{ id: 'progress', title: '進度', isShown: shown, isFocused: false, isPlaced: shown }],
+  })
+  await start($)
+  await verify($)
+  await $.turn.complete(reply('要你決定：今天合併嗎？'))
+  expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · 約 10 分 · 輪到你')
+  shown = true
+  await clock.advance(5000)
+  expect(lines[lines.length - 1]).toBeUndefined()
 })
 
 // ── motion ───────────────────────────────────────────────────────

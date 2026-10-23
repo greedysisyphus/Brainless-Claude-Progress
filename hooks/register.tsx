@@ -230,6 +230,126 @@ async function langNow($: any): Promise<Lang> {
   return ((await read($, langPick)) || (await read($, langAuto)) || 'en') as Lang
 }
 
+type Mark = 'done' | 'run' | 'fail' | 'none' | 'skip'
+type Step = { name: string; mark: Mark; note: string; isCi?: boolean }
+
+// Everything the pane and the status line show, worked out once from the state.
+async function viewOf($: any) {
+  await read($, now) // subscribes the drawing to the minute tick
+  const t = Date.now()
+  const s = STRINGS[await langNow($)]
+  const tasks = await read($, bg)
+  const watched = await read($, prs)
+  const who = await read($, turn)
+  const waiting = await read($, ask)
+  const frame_ = await read($, frame)
+  const still = await read($, quiet)
+  const sessionRepo = await read($, repoNow)
+  const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
+
+  // agents spawned before this load, or not through the Agent tool, are known only to the engine
+  const agents = ((await $.agent.list().catch(() => [])) as any[])
+    .filter(a => ['running', 'pending', 'waiting'].includes(a.status) && !tasks.some(x => x.id === a.id))
+    .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: stageOf(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
+  // filed by today's rules, so a task recorded before an update or a reload is not stuck under an old step
+  const all = [...tasks.map(x => ({ ...x, stage: stageOf(x.label) })), ...agents]
+  const live = all.filter(x => !x.doneAt)
+  // with nothing else to go on, the ticket is the one the running work is named for
+  const cur = (await read($, ticket)) || live.find(x => x.ticket)?.ticket || ''
+  const recent = tasks.filter(x => x.doneAt).slice(-2)
+
+  // the view: one row per step of the current ticket, CI and merge from its PR
+  const mine = all.filter(x => x.ticket === cur)
+  const pr = [...watched].reverse().find(p => p.ticket === cur) ?? (cur ? undefined : watched[watched.length - 1])
+  const repo = pr?.repo ?? sessionRepo
+  // remaining time: what this kind of step took before, less what it has run; unknown until learned
+  // a running step with no history can't count down: the estimate then starts when it ends
+  let left = 0
+  let unknown = 0
+  let blocker = ''
+  const steps: Step[] = []
+  const seen = STAGES.map(stage => [...mine].reverse().find(x => x.stage === stage))
+  // a step before one already under way was done where this pane could not see it
+  const furthest = Math.max(-1, ...seen.map((x, i) => (x ? i : -1)), pr ? STAGES.length : -1)
+  for (const [i, stage] of STAGES.entries()) {
+    const last = seen[i]
+    const mark: Mark = !last ? (i < furthest ? 'skip' : 'none')
+      : !last.doneAt ? 'run' : last.status && last.status !== 'completed' ? 'fail' : 'done'
+    const typical = median(await past($, `stage:${stage}`))
+    const ran = last && !last.doneAt && last.startedAt ? t - last.startedAt : 0
+    const name = s[stage as 'write' | 'review' | 'verify']
+    if (mark === 'run' || (mark === 'none' && cur)) {
+      if (typical) left += Math.max(mark === 'run' ? 60000 : 0, typical - ran)
+      else if (mark === 'run') blocker ||= name
+      else unknown++
+    }
+    const parts = [ran ? ago(ran) : '', mark === 'run' && typical ? s.left(mins(Math.max(60000, typical - ran))) : '']
+    steps.push({ name, mark, note: parts.filter(Boolean).join(' · ') })
+  }
+  let eta = 0
+  let ci: Step = { name: 'CI', mark: 'none', note: '', isCi: true }
+  let bar = ''
+  if (pr) {
+    const pend = pr.checks.filter(c => c.state === 'pending')
+    const fail = pr.checks.filter(c => c.state === 'fail')
+    const pass = pr.checks.filter(c => c.state === 'pass')
+    for (const c of pend) {
+      const prior = await past($, ciKey(repo, c.name))
+      if (prior.length && c.startedAt) eta = Math.max(eta, median(prior) - (t - c.startedAt))
+    }
+    const n = pr.checks.length
+    if (n) bar = '▰'.repeat(Math.round((pass.length / n) * 6)) + '▱'.repeat(6 - Math.round((pass.length / n) * 6))
+    ci = fail.length ? { name: 'CI', mark: 'fail', note: s.failed(fail.length), isCi: true }
+      : pend.length ? { name: 'CI', mark: 'run', note: `${pass.length}/${n}${eta > 0 ? ` · ${s.left(mins(eta))}` : ''}`, isCi: true }
+      : n ? { name: 'CI', mark: 'done', note: s.allGreen, isCi: true } : { name: 'CI', mark: 'none', note: s.loading, isCi: true }
+  }
+  const ciTypical = median(await past($, ciKey(repo, 'total')))
+  if (ci.mark === 'run') eta > 0 ? (left += eta) : (blocker ||= 'CI')
+  else if (ci.mark === 'none' && cur) ciTypical ? (left += ciTypical) : unknown++
+  const finished = pr?.state === 'MERGED'
+  const ticking = ci.mark === 'run' || steps.some(x => x.mark === 'run')
+  const etaLine = finished ? s.done
+    : left === 0 && unknown === 0 && !blocker ? ''
+    : left === 0 ? s.learning
+    : (blocker ? s.after(blocker, mins(left))
+      // nothing under way: the time is real, but the clock has not started
+      : !ticking ? s.pending(mins(left))
+      : s.eta(mins(left))) + (unknown ? s.noHistory(unknown) : '')
+  const merged: Step = { name: s.merge, mark: finished ? 'done' : 'none', note: pr ? `PR #${pr.number}` : '' }
+  const failNames = pr ? pr.checks.filter(c => c.state === 'fail').map(c => c.name).slice(0, 2) : []
+  const rows = [...steps, ci, merged]
+
+  const busy = live.length > 0 || who === 'working'
+  const yourTurn = who === 'asking' ? s.askPending
+    : waiting ? waiting
+    : who === 'idle' && !busy ? s.idleWaiting : ''
+
+  motion = !still && (busy || ci.mark === 'run')
+  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still }
+}
+
+// One line for Claude Code's own status line, for when the pane is not on screen:
+// the ticket, the step under way, the time left, and whether it is your turn.
+export function statusLine(v: Awaited<ReturnType<typeof viewOf>>): string | undefined {
+  const running = v.steps.find(x => x.mark === 'run') ?? (v.ci.mark === 'run' ? v.ci : undefined)
+  const time = v.finished ? v.s.done : v.left > 0 ? (v.blocker ? '≥ ' : '') + v.s.short(mins(v.left)) : ''
+  const parts = [running ? `✻ ${running.name}` : '', time, v.yourTurn ? v.s.yourTurn : ''].filter(Boolean)
+  if (!v.cur && !parts.length) return undefined
+  return [v.cur, parts.join(' · ')].filter(Boolean).join(' ')
+}
+
+// ponytail: module memory of the last line sent; a reload sends it once more
+let lastStatus: string | undefined = ''
+
+async function refreshStatus($: any) {
+  const panes = ((await $.ui.panes().catch(() => [])) as any[])
+  const onScreen = panes.some(p => p.id === PANE && p.isPlaced && p.isShown)
+  const line = onScreen ? undefined : statusLine(await viewOf($))
+  if (line === lastStatus) return
+  lastStatus = line
+  $.ui.status(line)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -270,6 +390,7 @@ export const register: Register = on => {
       await update($, now, () => Date.now())
       await poll($)
     })
+    $.clock.every(5000, async () => refreshStatus($))
     $.clock.every(250, async () => {
       if (motion) await update($, frame, f => (f + 1) % 1600)
     })
@@ -325,6 +446,7 @@ export const register: Register = on => {
       // a reply with no decision keeps the one still unanswered; only the person's reply clears it
       const waiting = askOf(e.answer)
       if (waiting) await update($, ask, () => waiting)
+      await refreshStatus($)
     }
     return next(e)
   })
@@ -386,99 +508,9 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    await read($, now) // subscribes the drawing to the minute tick
-    const t = Date.now()
-    const s = STRINGS[await langNow($)]
-    const tasks = await read($, bg)
-    const watched = await read($, prs)
-    const who = await read($, turn)
-    const waiting = await read($, ask)
-    const frame_ = await read($, frame)
-    const still = await read($, quiet)
-    const sessionRepo = await read($, repoNow)
+    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still } = await viewOf($)
     const width = Math.max(24, (e.props as any).bodyColumns ?? 40)
     const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
-
-    // agents spawned before this load, or not through the Agent tool, are known only to the engine
-    const agents = ((await $.agent.list().catch(() => [])) as any[])
-      .filter(a => ['running', 'pending', 'waiting'].includes(a.status) && !tasks.some(x => x.id === a.id))
-      .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: stageOf(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
-    // filed by today's rules, so a task recorded before an update or a reload is not stuck under an old step
-    const all = [...tasks.map(x => ({ ...x, stage: stageOf(x.label) })), ...agents]
-    const live = all.filter(x => !x.doneAt)
-    // with nothing else to go on, the ticket is the one the running work is named for
-    const cur = (await read($, ticket)) || live.find(x => x.ticket)?.ticket || ''
-    const recent = tasks.filter(x => x.doneAt).slice(-2)
-
-    // the view: one row per step of the current ticket, CI and merge from its PR
-    type Mark = 'done' | 'run' | 'fail' | 'none' | 'skip'
-    type Step = { name: string; mark: Mark; note: string; isCi?: boolean }
-    const mine = all.filter(x => x.ticket === cur)
-    const pr = [...watched].reverse().find(p => p.ticket === cur) ?? (cur ? undefined : watched[watched.length - 1])
-    const repo = pr?.repo ?? sessionRepo
-    // remaining time: what this kind of step took before, less what it has run; unknown until learned
-    // a running step with no history can't count down: the estimate then starts when it ends
-    let left = 0
-    let unknown = 0
-    let blocker = ''
-    const steps: Step[] = []
-    const seen = STAGES.map(stage => [...mine].reverse().find(x => x.stage === stage))
-    // a step before one already under way was done where this pane could not see it
-    const furthest = Math.max(-1, ...seen.map((x, i) => (x ? i : -1)), pr ? STAGES.length : -1)
-    for (const [i, stage] of STAGES.entries()) {
-      const last = seen[i]
-      const mark: Mark = !last ? (i < furthest ? 'skip' : 'none')
-        : !last.doneAt ? 'run' : last.status && last.status !== 'completed' ? 'fail' : 'done'
-      const typical = median(await past($, `stage:${stage}`))
-      const ran = last && !last.doneAt && last.startedAt ? t - last.startedAt : 0
-      const name = s[stage as 'write' | 'review' | 'verify']
-      if (mark === 'run' || (mark === 'none' && cur)) {
-        if (typical) left += Math.max(mark === 'run' ? 60000 : 0, typical - ran)
-        else if (mark === 'run') blocker ||= name
-        else unknown++
-      }
-      const parts = [ran ? ago(ran) : '', mark === 'run' && typical ? s.left(mins(Math.max(60000, typical - ran))) : '']
-      steps.push({ name, mark, note: parts.filter(Boolean).join(' · ') })
-    }
-    let eta = 0
-    let ci: Step = { name: 'CI', mark: 'none', note: '', isCi: true }
-    let bar = ''
-    if (pr) {
-      const pend = pr.checks.filter(c => c.state === 'pending')
-      const fail = pr.checks.filter(c => c.state === 'fail')
-      const pass = pr.checks.filter(c => c.state === 'pass')
-      for (const c of pend) {
-        const prior = await past($, ciKey(repo, c.name))
-        if (prior.length && c.startedAt) eta = Math.max(eta, median(prior) - (t - c.startedAt))
-      }
-      const n = pr.checks.length
-      if (n) bar = '▰'.repeat(Math.round((pass.length / n) * 6)) + '▱'.repeat(6 - Math.round((pass.length / n) * 6))
-      ci = fail.length ? { name: 'CI', mark: 'fail', note: s.failed(fail.length), isCi: true }
-        : pend.length ? { name: 'CI', mark: 'run', note: `${pass.length}/${n}${eta > 0 ? ` · ${s.left(mins(eta))}` : ''}`, isCi: true }
-        : n ? { name: 'CI', mark: 'done', note: s.allGreen, isCi: true } : { name: 'CI', mark: 'none', note: s.loading, isCi: true }
-    }
-    const ciTypical = median(await past($, ciKey(repo, 'total')))
-    if (ci.mark === 'run') eta > 0 ? (left += eta) : (blocker ||= 'CI')
-    else if (ci.mark === 'none' && cur) ciTypical ? (left += ciTypical) : unknown++
-    const finished = pr?.state === 'MERGED'
-    const ticking = ci.mark === 'run' || steps.some(x => x.mark === 'run')
-    const etaLine = finished ? s.done
-      : left === 0 && unknown === 0 && !blocker ? ''
-      : left === 0 ? s.learning
-      : (blocker ? s.after(blocker, mins(left))
-        // nothing under way: the time is real, but the clock has not started
-        : !ticking ? s.pending(mins(left))
-        : s.eta(mins(left))) + (unknown ? s.noHistory(unknown) : '')
-    const merged: Step = { name: s.merge, mark: finished ? 'done' : 'none', note: pr ? `PR #${pr.number}` : '' }
-    const failNames = pr ? pr.checks.filter(c => c.state === 'fail').map(c => c.name).slice(0, 2) : []
-    const rows = [...steps, ci, merged]
-
-    const busy = live.length > 0 || who === 'working'
-    const yourTurn = who === 'asking' ? s.askPending
-      : waiting ? waiting
-      : who === 'idle' && !busy ? s.idleWaiting : ''
-
-    motion = !still && (busy || ci.mark === 'run')
     const spin = SPIN[frame_ % SPIN.length]!
     const GLYPH: Record<Mark, string> = { done: '✓', run: still ? '✻' : spin, fail: '✕', none: '○', skip: '–' }
     const COLOR: Record<Mark, string | undefined> = { done: 'success', run: 'claude', fail: 'error', none: undefined, skip: undefined }

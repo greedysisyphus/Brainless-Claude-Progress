@@ -26,9 +26,10 @@ Accept the two trade-offs?
 
 - **The current ticket and its steps.** Write → Review → Verify → CI → Merge, each marked done, running or not started.
 - **CI status** of the ticket's pull request, polled with the GitHub CLI once a minute. A check that failed on an earlier push of the same commit no longer shows as failed once it has been re-run.
-- **Time estimates that learn.** Every step remembers how long it took (the last 10 runs). CI time is read from your repository's last 10 merged pull requests on first use, so the very first ticket already has a CI estimate. Steps with no history yet say so instead of guessing.
+- **Time estimates that learn.** Every step remembers how long it took (the last 10 runs). CI time is read from your repository's last 10 merged pull requests on first use, so the very first ticket already has a CI estimate. Steps with no history yet say so instead of guessing; while one of them is running, the estimate is shown as a floor (*at least ~N min more*) rather than a countdown that cannot move.
 - **Background work.** Subagents and background shell commands, with how long each has been running.
 - **Your turn.** When a reply hands a decision back to you, the pane shows it until you answer, even if more replies come in between.
+- **A status-line summary** when the pane is not on screen (a narrow terminal, or closed): `#128 ✻ Verify · ~10 min · Your turn` in Claude Code's own status line.
 - Animated with Claude's own spark (✢ ✳ ✶ ✻ ✽) while work runs; still when nothing does.
 
 ## Install
@@ -102,6 +103,7 @@ Claude Code 的進度面板，放在聊天旁邊，回答你最常問的三件�
 - **會學習的預計時間**：每一步記住最近 10 次實際花的時間；CI 第一次使用時會從 repo 最近 10 張合併的 PR 讀歷史，所以第一張票就有 CI 的預估。沒有資料的步驟會直接說「還沒資料」，不會亂猜。
 - **背景工作**：子代理和背景指令，以及各跑了多久。
 - **輪到你**：回覆把決定交給你時，面板會一直顯示，直到你回話為止。
+- **狀態列摘要**：面板不在畫面上時（終端太窄或關掉了），Claude Code 下方的狀態列會顯示一行：`#128 ✻ 上機驗證 · 約 10 分 · 輪到你`。
 
 安裝：在 Claude Code 終端機輸入
 
