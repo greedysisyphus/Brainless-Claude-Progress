@@ -519,7 +519,8 @@ export const register: Register = on => {
     // the CI bar's next cell pulses while checks run
     const shimmer = still || !bar.includes('▱') ? bar : bar.replace('▱', frame_ % 2 ? '▰' : '▱')
 
-    const mood: Mood = ci.mark === 'fail' || steps.some(x => x.mark === 'fail') ? 'fail'
+    // a red check is an alarm only when nobody is at work on it: while work runs it stays on its row
+    const mood: Mood = (ci.mark === 'fail' || steps.some(x => x.mark === 'fail')) && !busy ? 'fail'
       : finished ? 'done' : yourTurn ? 'ask' : busy ? 'work' : 'idle'
     const spark = sparkFor(mood, still ? 4 : frame_)
     const SPARK_COLOR: Record<Mood, string | undefined> = { work: 'claude', ask: 'warning', idle: undefined, fail: 'error', done: 'success' }
