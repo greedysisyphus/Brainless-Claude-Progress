@@ -115,7 +115,7 @@ const ciKey = (repo: string | undefined, name: string) => `ci:${repo || '?'}:${n
 async function finish($: any, id: string, status?: string) {
   const x = (await read($, bg)).find(y => y.id === id && !y.doneAt)
   if (!x) return
-  const end = Date.now()
+  const end = await $.clock.now()
   await update($, bg, all => all.map(y => (y.id === id && !y.doneAt ? { ...y, doneAt: end, status } : y)))
   if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${x.stage}`, end - x.startedAt)
 }
@@ -226,9 +226,10 @@ async function poll($: any) {
       const total = ciTotal(roll)
       if (total > 0) await learn($, ciKey(repo, 'total'), total)
     }
+    const polledAt = await $.clock.now()
     await update($, prs, all =>
       all.map(p => (p.number === pr.number && p.cwd === pr.cwd
-        ? { ...p, repo, branch: j.headRefName, ticket: ticketOfPr(String(j.headRefName ?? ''), String(j.title ?? '')) ?? p.ticket, title: j.title, state: j.state, checks, polledAt: Date.now() } : p)),
+        ? { ...p, repo, branch: j.headRefName, ticket: ticketOfPr(String(j.headRefName ?? ''), String(j.title ?? '')) ?? p.ticket, title: j.title, state: j.state, checks, polledAt: polledAt } : p)),
     )
   }
 }
@@ -260,7 +261,8 @@ type Step = { name: string; mark: Mark; note: string; isCi?: boolean }
 // Everything the pane and the status line show, worked out once from the state.
 async function viewOf($: any) {
   await read($, now) // subscribes the drawing to the minute tick
-  const t = Date.now()
+  // the engine's clock: the wall clock in a session, a controllable one under test
+  const t = await $.clock.now()
   const s = STRINGS[await langNow($)]
   const tasks = await read($, bg)
   const watched = await read($, prs)
@@ -297,6 +299,8 @@ async function viewOf($: any) {
   let left = 0
   let unknown = 0
   let blocker = ''
+  // the blocker ran past what its step usually takes (it has history, just not enough)
+  let isOverdue = false
   const steps: Step[] = []
   const seen = STAGES.map(stage => [...mine].reverse().find(x => x.stage === stage))
   // a step before one already under way was done where this pane could not see it
@@ -308,12 +312,15 @@ async function viewOf($: any) {
     const typical = median(await past($, `stage:${stage}`))
     const ran = last && !last.doneAt && last.startedAt ? t - last.startedAt : 0
     const name = s[stage as 'write' | 'review' | 'verify']
+    const over = mark === 'run' && typical > 0 && ran > typical
     if (mark === 'run' || (mark === 'none' && cur)) {
-      if (typical) left += Math.max(mark === 'run' ? 60000 : 0, typical - ran)
-      else if (mark === 'run') blocker ||= name
-      else unknown++
+      if (typical && !over) left += Math.max(mark === 'run' ? 60000 : 0, typical - ran)
+      else if (mark === 'run') {
+        if (!blocker) isOverdue = over
+        blocker ||= name
+      } else unknown++
     }
-    const parts = [ran ? ago(ran) : '', mark === 'run' && typical ? s.left(mins(Math.max(60000, typical - ran))) : '']
+    const parts = [last && !last.doneAt && last.startedAt ? ago(ran) : '', mark === 'run' && typical ? (over ? s.usually(mins(typical)) : s.left(mins(Math.max(60000, typical - ran)))) : '']
     steps.push({ name, mark, note: parts.filter(Boolean).join(' · ') })
   }
   let eta = 0
@@ -347,7 +354,7 @@ async function viewOf($: any) {
   const etaLine = finished ? s.done
     : left === 0 && unknown === 0 && !blocker ? ''
     : left === 0 ? s.learning
-    : (blocker ? s.after(blocker, mins(left))
+    : (blocker ? (isOverdue ? s.slow(blocker, mins(left)) : s.after(blocker, mins(left)))
       // nothing under way: the time is real, but the clock has not started
       : !ticking ? s.pending(mins(left))
       : s.eta(mins(left))) + (unknown ? s.noHistory(unknown) : '')
@@ -411,7 +418,8 @@ export const register: Register = on => {
       }
     })
     $.clock.every(60000, async () => {
-      await update($, now, () => Date.now())
+      const at = await $.clock.now()
+      await update($, now, () => at)
       await poll($)
     })
     // 1.2.x pinned a line under the prompt; the band above it replaces that line
@@ -499,9 +507,9 @@ export const register: Register = on => {
     if (id) {
       const t = ticketOfName(e.description)
       if (t) await update($, ticket, () => t)
-      const task: BgTask = { id, label: e.description, kind: 'agent', stage: stageOf(e.description), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: Date.now() }
+      const task: BgTask = { id, label: e.description, kind: 'agent', stage: stageOf(e.description), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: await $.clock.now() }
       // a foreground agent has already finished by the time next resolves
-      if ((ran as any).result?.content) task.doneAt = Date.now()
+      if ((ran as any).result?.content) task.doneAt = task.startedAt
       await update($, bg, all => [...all, task].slice(-10))
     }
     return ran
@@ -525,7 +533,7 @@ export const register: Register = on => {
     const id = (ran as any).result?.backgroundTaskId
     if (id) {
       const label = e.description ?? cmd.slice(0, 40)
-      const task: BgTask = { id, label, kind: 'bash', stage: stageOf(e.description ?? cmd), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: Date.now() }
+      const task: BgTask = { id, label, kind: 'bash', stage: stageOf(e.description ?? cmd), ticket: t ?? ((await read($, ticket)) || undefined), startedAt: await $.clock.now() }
       await update($, bg, all => [...all, task].slice(-10))
     }
     return ran
