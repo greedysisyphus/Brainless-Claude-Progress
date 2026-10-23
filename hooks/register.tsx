@@ -403,7 +403,8 @@ export const register: Register = on => {
     const agents = ((await $.agent.list().catch(() => [])) as any[])
       .filter(a => ['running', 'pending', 'waiting'].includes(a.status) && !tasks.some(x => x.id === a.id))
       .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: stageOf(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
-    const all = [...tasks, ...agents]
+    // filed by today's rules, so a task recorded before an update or a reload is not stuck under an old step
+    const all = [...tasks.map(x => ({ ...x, stage: stageOf(x.label) })), ...agents]
     const live = all.filter(x => !x.doneAt)
     // with nothing else to go on, the ticket is the one the running work is named for
     const cur = (await read($, ticket)) || live.find(x => x.ticket)?.ticket || ''
