@@ -264,8 +264,9 @@ test('a notification is not the person: it neither changes the language nor clea
   expect(await v.text(/^背景工作$/)).toBe('背景工作')
   expect(await v.text(/今天合併/)).toBe('今天合併嗎？')
   await v.close()
-  // the person's own words through Remote Control do count
-  await $.prompt.submit({ text: 'ok go ahead and merge it today please', origin: { kind: 'bridge' } } as any)
+  // the person's own words through Remote Control do count (enough of them move the language)
+  for (const text of ['ok go ahead and merge it today please', 'and then open the next ticket', 'also delete the old folder', 'thanks, carry on with the plan'])
+    await $.prompt.submit({ text, origin: { kind: 'bridge' } } as any)
   v = await view($)
   expect(await v.text(/^Background$/)).toBe('Background')
   expect(await v.text(/今天合併/)).toBeFalsy()
@@ -295,6 +296,21 @@ test('the starting language is the one most recent messages are in, ties to the 
   expect(mostOf(['zh-Hant', 'zh-Hant', 'en'])).toBe('zh-Hant')
   expect(mostOf(['en', 'zh-Hant'])).toBe('zh-Hant')
   expect(mostOf([])).toBeUndefined()
+})
+
+test('one short line in another language does not flip the pane ("progress bar off" in a Chinese conversation)', async ($, on) => {
+  engine(on, { history: ['幫我看一下這個畫面', '可以，照你建議', '現在進度？'] })
+  await start($)
+  await $.prompt.submit({ text: 'progress bar off', origin: { kind: 'human' } } as any)
+  let v = await view($)
+  expect(await v.text(/^背景工作$/)).toBe('背景工作')
+  await v.close()
+  // a person who keeps writing in English does move it
+  for (const text of ['please check the build again', 'ok now open the PR', 'what is left to do here'])
+    await $.prompt.submit({ text, origin: { kind: 'human' } } as any)
+  v = await view($)
+  expect(await v.text(/^Background$/)).toBe('Background')
+  await v.close()
 })
 
 test('Claude Code’s language setting outranks what the person types', async ($, on) => {

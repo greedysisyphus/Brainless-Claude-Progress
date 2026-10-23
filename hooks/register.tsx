@@ -16,6 +16,8 @@ const quiet = atom({ plugin: 'brainless-claude-progress', key: 'still' } as cons
 const langPick = atom({ plugin: 'brainless-claude-progress', key: 'langPick' } as const, '' as LangPick)
 const langAuto = atom({ plugin: 'brainless-claude-progress', key: 'langAuto' } as const, '' as LangPick)
 const repoNow = atom({ plugin: 'brainless-claude-progress', key: 'repo' } as const, '')
+// the languages of the person's last ten messages: one short line in another language does not tip it
+const said = atom({ plugin: 'brainless-claude-progress', key: 'said' } as const, [] as Lang[])
 const barMode = atom({ plugin: 'brainless-claude-progress', key: 'bar' } as const, 'always' as 'always' | 'auto' | 'off')
 
 // ponytail: module flag the drawing sets and the frame timer reads; a reload resets it to off until the next draw
@@ -436,12 +438,13 @@ export const register: Register = on => {
       await $.store.delete('langFromSettings')
       // a resumed or reloaded conversation already says which language the person writes in
       // the language most of the last ten user rows are in: a relayed notice now and then does not tip it
-      const said = ((await $.session.messages().catch(() => [])) as any[])
+      const history = ((await $.session.messages().catch(() => [])) as any[])
         .filter(m => m.role === 'user' && typeof m.text === 'string' && !/^\s*[<\/[]/.test(m.text))
         .map(m => detectLang(m.text))
         .filter((l): l is Lang => Boolean(l))
         .slice(-10)
-      const l = mostOf(said)
+      await update($, said, () => history)
+      const l = mostOf(history)
       if (l) await update($, langAuto, () => l)
     }
 
@@ -511,7 +514,11 @@ export const register: Register = on => {
       await update($, ask, () => '')
       // the person's own words say which language they read, unless Claude Code's setting already does
       const l = e.command ? undefined : detectLang(e.text)
-      if (l && !(await $.store.get('langFromSettings'))) await update($, langAuto, () => l)
+      if (l && !(await $.store.get('langFromSettings'))) {
+        const recent = await update($, said, list => [...list, l].slice(-10))
+        const most = mostOf(recent)
+        if (most) await update($, langAuto, () => most)
+      }
     }
     return next(e)
   })
