@@ -63,7 +63,7 @@ function ticketOfRef(ref: string): string | undefined {
 }
 
 // The ticket a shell command works on: only where the command says so (the folder it enters,
-// a branch it makes or pushes, an issue it opens), never a number that merely appears in its text.
+// a branch it makes or pushes, an issue it develops), never a number that merely appears in its text.
 export function ticketOfCommand(cmd: string): string | undefined {
   const cd = cmd.match(CD)
   const dir = cd && (cd[2] ?? cd[3] ?? cd[4])
@@ -81,7 +81,8 @@ export function ticketOfCommand(cmd: string): string | undefined {
     const t = ticketOfRef(wt.replace(/"/g, ''))
     if (t) return t
   }
-  const issue = cmd.match(/\bgh\s+issue\s+(?:view|develop|edit|comment|close|reopen)\s+(\d+)/)?.[1]
+  // reading, commenting on or closing an issue is not starting it; making its branch is
+  const issue = cmd.match(/\bgh\s+issue\s+develop\s+(\d+)/)?.[1]
   return issue ? `#${issue}` : undefined
 }
 

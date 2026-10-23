@@ -72,7 +72,7 @@ English, 繁體中文, 简体中文 and 日本語. Unless you pick one, the pane
 
 It reads only what Claude Code already sees; it sends nothing anywhere except `gh` calls to GitHub for your own pull requests.
 
-- **The ticket** comes from places that say what the work is: an agent's task name (`Device verify #128`, `Review PROJ-42`), the folder a command `cd`s into (`…/128-small-fixes`), a branch a command creates or pushes (`claude/731-dark-mode`, `feature/PROJ-9-search`), or `gh issue view 412`. A number that merely appears inside a command, such as in a file being written, is ignored.
+- **The ticket** comes from places that say what the work is: an agent's task name (`Device verify #128`, `Review PROJ-42`), the folder a command `cd`s into (`…/128-small-fixes`), a branch a command creates or pushes (`claude/731-dark-mode`, `feature/PROJ-9-search`), or `gh issue develop 412`. Viewing, commenting on or closing an issue does not switch to it. A number that merely appears inside a command, such as in a file being written, is ignored.
 - **The step** comes from the task's name, in any of the four languages: *review / 審查 / 审查 / レビュー*, *verify / test / QA / 驗證 / 验证 / 検証*, *implement / fix / 寫 / 写 / 実装*. A task named otherwise is listed under Background without a step.
 - **The pull request** comes from `gh pr …` commands and from the PR link printed by `gh pr create` or `git push`.
 - **"Your turn"** is a reply that has a heading such as *Decision needed*, *Action required*, *要你決定*, *需要你决定*, *ご判断ください*; or, without one, a reply whose last paragraph is a question. It clears when you send your next message.

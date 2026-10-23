@@ -113,7 +113,10 @@ test('a ticket comes from where the work says it is, not from any number in a co
   expect(ticketOfCommand('git checkout -b claude/731-dark-mode')).toBe('#731')
   expect(ticketOfCommand('git push -u origin feature/PROJ-9-search')).toBe('PROJ-9')
   expect(ticketOfCommand('git worktree add /tmp/wt/88-fix -b me/88-fix origin/main')).toBe('#88')
-  expect(ticketOfCommand('gh issue view 412')).toBe('#412')
+  expect(ticketOfCommand('gh issue develop 412 --checkout')).toBe('#412')
+  // noting something on another ticket does not move the work there
+  for (const verb of ['view', 'comment', 'edit', 'close'])
+    expect([verb, ticketOfCommand(`cat > note.md <<'EOF'\nfollow-up\nEOF\ngh issue ${verb} 130 --body-file note.md`)]).toEqual([verb, undefined])
   // the session that wrote a test file mentioning "#128" is not working on #128
   expect(ticketOfCommand("cat > test.ts <<'EOF'\nverify('Device verify #128', '/w/128-x')\nEOF")).toBeUndefined()
   expect(ticketOfCommand('grep -n "#128" notes.md')).toBeUndefined()
