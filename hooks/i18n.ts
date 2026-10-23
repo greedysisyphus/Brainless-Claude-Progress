@@ -16,6 +16,8 @@ type Strings = {
   doing: (what: string) => string
   thisTurn: (n: number) => string
   todoDone: (done: number, all: number) => string
+  stuck: (n: number, what: string) => string
+  changed: (n: number, names: string) => string
   tools: Record<string, string>
   write: string
   review: string
@@ -64,6 +66,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doing: x => `Now: ${x}`,
     thisTurn: n => (n < 1 ? 'this turn: just started' : `this turn: ${n} min`),
     todoDone: (d, a) => `${d}/${a} done`,
+    stuck: (n, x) => `Stuck: ${n} failures in a row${x ? ` (${x})` : ''}`,
+    changed: (n, x) => `Changed this turn: ${n === 1 ? '1 file' : `${n} files`}: ${x}`,
     tools: { Read: 'Reading', Edit: 'Editing', Write: 'Writing', Grep: 'Searching', Glob: 'Finding files', WebSearch: 'Searching the web', WebFetch: 'Reading a page', Skill: 'Loading a skill' },
     write: 'Write',
     review: 'Review',
@@ -110,6 +114,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doing: x => `目前：${x}`,
     thisTurn: n => (n < 1 ? '這輪剛開始' : `這輪已做 ${n} 分`),
     todoDone: (d, a) => `${d}/${a} 項完成`,
+    stuck: (n, x) => `卡住了：連續 ${n} 次失敗${x ? `（${x}）` : ''}`,
+    changed: (n, x) => `這輪改了 ${n} 個檔案：${x}`,
     tools: { Read: '讀', Edit: '改', Write: '寫', Grep: '搜尋', Glob: '找檔案', WebSearch: '上網查', WebFetch: '讀網頁', Skill: '載入技能' },
     write: '寫程式',
     review: '審查',
@@ -156,6 +162,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doing: x => `当前：${x}`,
     thisTurn: n => (n < 1 ? '这轮刚开始' : `这轮已做 ${n} 分`),
     todoDone: (d, a) => `${d}/${a} 项完成`,
+    stuck: (n, x) => `卡住了：连续 ${n} 次失败${x ? `（${x}）` : ''}`,
+    changed: (n, x) => `这轮改了 ${n} 个文件：${x}`,
     tools: { Read: '读', Edit: '改', Write: '写', Grep: '搜索', Glob: '找文件', WebSearch: '上网查', WebFetch: '读网页', Skill: '加载技能' },
     write: '写代码',
     review: '审查',
@@ -202,6 +210,8 @@ export const STRINGS: Record<Lang, Strings> = {
     doing: x => `作業中：${x}`,
     thisTurn: n => (n < 1 ? 'このターン：開始したばかり' : `このターン：${n} 分`),
     todoDone: (d, a) => `${d}/${a} 件完了`,
+    stuck: (n, x) => `行き詰まり：${n} 回連続で失敗${x ? `（${x}）` : ''}`,
+    changed: (n, x) => `このターンで ${n} ファイル変更：${x}`,
     tools: { Read: '読む', Edit: '編集', Write: '書く', Grep: '検索', Glob: 'ファイル検索', WebSearch: 'ウェブ検索', WebFetch: 'ページを読む', Skill: 'スキル読み込み' },
     write: '実装',
     review: 'レビュー',

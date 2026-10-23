@@ -22,6 +22,8 @@ const todos = atom({ plugin: 'brainless-claude-progress', key: 'todos' } as cons
 const doing = atom({ plugin: 'brainless-claude-progress', key: 'doing' } as const, { tool: '', text: '' })
 const turnAt = atom({ plugin: 'brainless-claude-progress', key: 'turnAt' } as const, 0)
 const place = atom({ plugin: 'brainless-claude-progress', key: 'place' } as const, '')
+const fails = atom({ plugin: 'brainless-claude-progress', key: 'fails' } as const, { n: 0, text: '' })
+const touched = atom({ plugin: 'brainless-claude-progress', key: 'touched' } as const, [] as string[])
 const barMode = atom({ plugin: 'brainless-claude-progress', key: 'bar' } as const, 'always' as 'always' | 'auto' | 'off')
 
 // ponytail: module flag the drawing sets and the frame timer reads; a reload resets it to off until the next draw
@@ -128,6 +130,10 @@ export const stageOf = (s: string): Stage =>
     : /review|審查|审查|レビュー|審閱|审阅|codex/i.test(s) ? 'review'
     : /verif|device|\bqa\b|\btest|e2e|simulator|\bci\b|ci:local|typecheck|type-check|\btsc\b|\blint|驗證|验证|驗機|上機|上机|測試|测试|検証|確認|テスト/i.test(s) ? 'verify'
     : /writ|implement|\bfix|build|refactor|寫|写|修|實作|实现|実装|修正/i.test(s) ? 'write' : 'other'
+
+// this many failed calls in a row, with no success between, is worth the person's eyes
+const STUCK = 3
+const EDITS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit']
 
 const STAGES: Stage[] = ['write', 'review', 'verify']
 
@@ -333,6 +339,8 @@ async function viewOf($: any) {
   const act = await read($, doing)
   const since = await read($, turnAt)
   const where = await read($, place)
+  const failed = await read($, fails)
+  const changedFiles = await read($, touched)
   const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
 
   // agents spawned before this load, or not through the Agent tool, are known only to the engine
@@ -437,9 +445,11 @@ async function viewOf($: any) {
   const now_ = act.text ? s.doing(act.tool ? `${s.tools[act.tool] ?? act.tool} ${act.text}`.trim() : act.text) : ''
   const turnLine = since ? s.thisTurn(mins(t - since)) : ''
   const todoDone = list.filter(x => x.status === 'completed').length
+  const stuck = failed.n >= STUCK ? s.stuck(failed.n, failed.text) : ''
+  const changed = changedFiles.length ? s.changed(changedFiles.length, changedFiles.slice(0, 3).join(s.sep) + (changedFiles.length > 3 ? '…' : '')) : ''
 
   motion = !still && (busy || ci.mark === 'run')
-  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where }
+  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed }
 }
 
 // The band above the prompt: the ticket, the step under way, the time left, and whether it is your turn.
@@ -569,6 +579,8 @@ export const register: Register = on => {
       const at = await $.clock.now()
       await update($, turnAt, () => at)
       await update($, doing, () => ({ tool: '', text: '' }))
+      await update($, fails, () => ({ n: 0, text: '' }))
+      await update($, touched, () => [])
     }
     return next(e)
   })
@@ -585,13 +597,19 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // what the main loop is doing now, and its own to-do list
+  // what the main loop is doing now, its own to-do list, whether it keeps failing, and the files it changed
   on('tool.call', async ($, e, next) => {
     if ((e as any).agentId) return next(e)
     const tool = String((e as any).tool)
     if (!['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'AskUserQuestion', 'ToolSearch'].includes(tool)) await update($, doing, () => activityOf(e))
     const ran = await next(e)
-    if (['TodoWrite', 'TaskCreate', 'TaskUpdate'].includes(tool)) await update($, todos, list => todosAfter(list, e, (ran as any).result))
+    const r = ran as any
+    if (['TodoWrite', 'TaskCreate', 'TaskUpdate'].includes(tool)) await update($, todos, list => todosAfter(list, e, r.result))
+    // a call the person declined (deny) is neither a failure nor a success
+    if (r.isError) await update($, fails, f => ({ n: f.n + 1, text: activityOf(e).text }))
+    else if (r.deny === undefined) await update($, fails, f => (f.n ? { n: 0, text: '' } : f))
+    const file = String((e as any).file_path ?? (e as any).notebook_path ?? '').split('/').pop()
+    if (!r.isError && r.deny === undefined && EDITS.includes(tool) && file) await update($, touched, all => (all.includes(file) ? all : [...all, file]))
     return ran
   })
 
@@ -672,6 +690,7 @@ export const register: Register = on => {
         {!v.cur && !running && v.now_ ? <Text><Text color="claude">{glyph}</Text> {v.now_}</Text> : ''}
         {running ? <Text><Text color="claude">{glyph}</Text> {running.name}{running.isCi && v.bar ? <Text color="claude"> {shimmer}</Text> : ''}</Text> : ''}
         {time ? <Text color={v.finished ? 'success' : 'claude'}>{time}</Text> : ''}
+        {v.stuck ? <Text bold color="warning">{v.stuck}</Text> : ''}
         {v.yourTurn ? <Text bold color="warning">{v.s.yourTurn}</Text> : ''}
       </Box>
     )
@@ -679,7 +698,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where } = await viewOf($)
+    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed } = await viewOf($)
     const width = Math.max(24, (e.props as any).bodyColumns ?? 40)
     const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
     const spin = SPIN[frame_ % SPIN.length]!
@@ -752,6 +771,7 @@ export const register: Register = on => {
               {live.length ? <Text dimColor>{s.background} · {s.running(live.length)}</Text> : ''}
             </Box>
           )}
+          {stuck ? <Text bold color="warning">{stuck}</Text> : ''}
           {yourTurn ? <Text><Text bold color="warning">{s.yourTurn}</Text>  {fit(yourTurn, width - s.yourTurn.length - 4)}</Text> : ''}
         </Box>
       )
@@ -775,6 +795,8 @@ export const register: Register = on => {
           {cur || pr ? rows.map(stepRow) : noTicket}
           {failNames.length > 0 && <Text color="error">  {failNames.join(s.sep)}</Text>}
           {etaLine && <Text color={finished ? 'success' : 'claude'}>{etaLine}</Text>}
+          {stuck && <Text bold color="warning">{fit(stuck, width - 4)}</Text>}
+          {changed && <Text dimColor>{fit(changed, width - 4)}</Text>}
         </Box>
         <Box flexDirection="column" borderStyle="round" borderColor="gray" borderDimColor paddingX={1}>
           <Box flexDirection="row" justifyContent="space-between">

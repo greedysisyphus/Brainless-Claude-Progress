@@ -42,6 +42,8 @@ function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]
     e.tool === 'Agent'
       ? { result: { status: 'async_launched', agentId: 'a1' } }
       : e.tool === 'TaskCreate' ? { result: { task: { id: e.subject, subject: e.subject } } }
+      // a command that fails: the tool answers an error
+      : /^false\b/.test(e.command ?? '') ? { result: { stdout: '', stderr: 'boom', interrupted: false }, isError: true }
       : { result: { stdout: /gh pr create/.test(e.command ?? '') ? opts.prUrl ?? '' : '', stderr: '', interrupted: false, backgroundTaskId: e.run_in_background ? 'b1' : undefined } })
   return clock
 }
@@ -836,5 +838,53 @@ test('a long background name gives way to its age, so the age stays on one line'
   // 44 columns: 4 of border and padding, 2 of glyph, a gap, 12 of "just started" leave 25 for the name
   expect((await v.text(/^[·✢✳✶✻✽] Wait fifteen/))?.slice(2).length).toBe(25)
   expect(await v.text(/^just started$/)).toBe('just started')
+  await v.close()
+})
+
+test('three failed calls in a row say Claude is stuck, in the pane and above the prompt; a success clears it', async ($, on) => {
+  engine(on, { LANG: 'zh_TW.UTF-8' })
+  await start($)
+  await $.turn.start({ text: '', turnId: 't1' } as any)
+  const fail = () => $.tool.call({ tool: 'Bash', command: 'false && npm test', description: 'Run the tests' } as any)
+  await fail()
+  await fail()
+  let v = await view($)
+  expect(await v.text(/^卡住了/)).toBeFalsy()
+  await v.close()
+  await fail()
+  v = await view($)
+  expect(await v.text(/^卡住了/)).toBe('卡住了：連續 3 次失敗（Run the tests）')
+  await v.close()
+  const b = await $.ui.mount({ plugin: 'brainless-claude-progress', component: 'AbovePrompt', surface: 'terminal', props: { hasSurvey: false, isWorking: true, maxRows: 4, bodyColumns: 80, scroll: { offset: 0, bodyRows: 4 }, view: {} } })
+  expect((await b.find({ type: 'Text', text: /^卡住了/ }))?.text).toBe('卡住了：連續 3 次失敗（Run the tests）')
+  await b.unmount()
+  // a subagent's failures are its own
+  await $.tool.call({ tool: 'Read', file_path: '/w/a.ts', agentId: 'sub1' } as any)
+  v = await view($)
+  expect(await v.text(/^卡住了/)).toBeTruthy()
+  await v.close()
+  await $.tool.call({ tool: 'Read', file_path: '/w/a.ts' } as any)
+  v = await view($)
+  expect(await v.text(/^卡住了/)).toBeFalsy()
+  await v.close()
+})
+
+test('the files Claude changed this turn stay listed after it ends, until the next turn starts', async ($, on) => {
+  engine(on, { LANG: 'zh_TW.UTF-8' })
+  await start($)
+  await $.turn.start({ text: '', turnId: 't1' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/w/src/player.ts', old_string: 'a', new_string: 'b' } as any)
+  await $.tool.call({ tool: 'Write', file_path: '/w/README.md', content: 'x' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/w/src/player.ts', old_string: 'b', new_string: 'c' } as any)
+  // read, not changed; and a subagent's edit is not the main loop's
+  await $.tool.call({ tool: 'Read', file_path: '/w/src/log.ts' } as any)
+  await $.tool.call({ tool: 'Edit', file_path: '/w/src/other.ts', old_string: 'a', new_string: 'b', agentId: 'sub1' } as any)
+  await $.turn.complete(reply('好了。'))
+  let v = await view($)
+  expect(await v.text(/^這輪改了/)).toBe('這輪改了 2 個檔案：player.ts、README.md')
+  await v.close()
+  await $.turn.start({ text: '', turnId: 't2' } as any)
+  v = await view($)
+  expect(await v.text(/^這輪改了/)).toBeFalsy()
   await v.close()
 })

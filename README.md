@@ -30,6 +30,8 @@ Accept the two trade-offs?
 
 - **The current ticket and its steps.** Write → Review → Verify → CI → Merge, each marked done, running or not started.
 - **No ticket? Still a status.** The folder and branch stand in for the ticket. If Claude keeps a to-do list, the pane shows it (*2/5 done*, each item ticked, running or waiting); otherwise it shows what Claude is doing right now (*Now: Reading player.ts*) and how long this turn has run.
+- **Stuck? It says so.** Three failed tool calls in a row, with no success between, turn into a yellow line in the pane and above the prompt (*Stuck: 3 failures in a row (Run the tests)*): the moment worth stepping in.
+- **What changed this turn.** The files Claude edited or wrote this turn stay listed after it ends (*Changed this turn: 2 files: player.ts, README.md*), until the next turn starts.
 - **CI status** of the ticket's pull request, polled with the GitHub CLI once a minute. A check that failed on an earlier push of the same commit no longer shows as failed once it has been re-run.
 - **Time estimates that learn.** Every step remembers how long it took (the last 10 runs), per repository. CI time is read from your repository's last 10 merged pull requests on first use, so the very first ticket already has a CI estimate. Steps with no history yet say so instead of guessing; while one of them is running, the estimate is shown as a floor (*at least ~N min more*) rather than a countdown that cannot move.
 - **Background work.** Subagents and background shell commands, with how long each has been running.
