@@ -10,7 +10,7 @@ const PANE = {
 } as const
 
 // the engine beneath the mod, as each test needs it
-function engine(on: any, opts: { status?: (string | undefined)[]; panes?: () => unknown[]; history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
+function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]; panes?: () => unknown[]; history?: string[]; agents?: unknown[]; store?: Record<string, unknown>; LANG?: string; language?: string; gh?: (argv: string[]) => string } = {}) {
   mock.store(on, opts.store ?? {})
   mock.env(on, { LANG: opts.LANG ?? 'en_US.UTF-8' })
   const clock = mock.clock(on)
@@ -33,7 +33,7 @@ function engine(on: any, opts: { status?: (string | undefined)[]; panes?: () => 
   on('tool.call', (_: any, e: any) =>
     e.tool === 'Agent'
       ? { result: { status: 'async_launched', agentId: 'a1' } }
-      : { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: e.run_in_background ? 'b1' : undefined } })
+      : { result: { stdout: /gh pr create/.test(e.command ?? '') ? opts.prUrl ?? '' : '', stderr: '', interrupted: false, backgroundTaskId: e.run_in_background ? 'b1' : undefined } })
   return clock
 }
 const start = ($: any) => $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -492,6 +492,31 @@ test('a PR only looked at belongs to the ticket its own branch names, not to the
   expect(await v.text(/^#1\d\d$/)).toBe('#132')
   expect(await v.text(/^Done$/)).toBeFalsy()
   expect(await v.text(/Merge/)).toBe('○ Merge')
+  expect(await v.text(/PR #90/)).toBeFalsy()
+  await v.close()
+})
+
+test('a merged PR whose branch was never read is read once more, and leaves a ticket it never belonged to', async ($, on) => {
+  let reply_ = JSON.stringify({ title: 'Brand colors', state: 'MERGED', url: 'https://github.com/me/app/pull/90', statusCheckRollup: [] })
+  let polls = 0
+  const clock = engine(on, { prUrl: 'https://github.com/me/app/pull/90', gh: a => (a.includes('view') && a.includes('90') ? (polls++, reply_) : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Agent', description: 'Writer stage 1 for #132', prompt: 'go', run_in_background: true } as any)
+  // what an older version did: the PR's link was taken as this ticket's own
+  await $.tool.call({ tool: 'Bash', command: 'gh pr create --fill', description: 'Open PR' } as any)
+  await clock.advance(60000)
+  expect(polls).toBe(1)
+  let v = await view($)
+  expect(await v.text(/PR #90/)).toBeTruthy()
+  await v.close()
+  // the reply then carried no branch: it is merged, and read again next time
+  reply_ = JSON.stringify({ title: 'Brand colors', state: 'MERGED', url: 'https://github.com/me/app/pull/90', headRefName: 'me/90-brand', statusCheckRollup: [] })
+  await clock.advance(60000)
+  // read once more because its branch was unknown, then left alone
+  expect(polls).toBe(2)
+  await clock.advance(60000)
+  expect(polls).toBe(2)
+  v = await view($)
   expect(await v.text(/PR #90/)).toBeFalsy()
   await v.close()
 })

@@ -206,7 +206,8 @@ async function poll($: any) {
   for (const x of await read($, bg)) if (x.kind === 'agent' && !x.doneAt && ended.has(x.id)) await finish($, x.id, ended.get(x.id))
 
   for (const pr of await read($, prs)) {
-    if (pr.state === 'MERGED' || pr.state === 'CLOSED') continue
+    // a finished PR is read once more if its branch was never read (a record from before 1.3.2)
+    if ((pr.state === 'MERGED' || pr.state === 'CLOSED') && pr.branch !== undefined) continue
     const argv = ['gh', 'pr', 'view', String(pr.number), '--json', 'title,state,url,headRefName,statusCheckRollup']
     if (pr.repo) argv.push('-R', pr.repo)
     const run = await $.process.run(argv, { cwd: pr.cwd, timeoutMs: 20000 }).catch(() => undefined)
@@ -227,7 +228,7 @@ async function poll($: any) {
     }
     await update($, prs, all =>
       all.map(p => (p.number === pr.number && p.cwd === pr.cwd
-        ? { ...p, repo, ticket: ticketOfPr(String(j.headRefName ?? ''), String(j.title ?? '')) ?? p.ticket, title: j.title, state: j.state, checks, polledAt: Date.now() } : p)),
+        ? { ...p, repo, branch: j.headRefName, ticket: ticketOfPr(String(j.headRefName ?? ''), String(j.title ?? '')) ?? p.ticket, title: j.title, state: j.state, checks, polledAt: Date.now() } : p)),
     )
   }
 }
