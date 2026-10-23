@@ -232,7 +232,16 @@ export const register: Register = on => {
     if (fromSettings ?? fromEnv) await update($, langAuto, () => (fromSettings ?? fromEnv)!)
     // a language setting outranks $LANG; the person's own writing (prompt.submit) outranks $LANG too
     if (fromSettings) await $.store.set('langFromSettings', true)
-    else await $.store.delete('langFromSettings')
+    else {
+      await $.store.delete('langFromSettings')
+      // a resumed or reloaded conversation already says which language the person writes in
+      const said = ((await $.session.messages().catch(() => [])) as any[])
+        .filter(m => m.role === 'user' && typeof m.text === 'string' && !/^\s*[</]/.test(m.text))
+        .map(m => detectLang(m.text))
+        .filter(Boolean)
+      const l = said[said.length - 1]
+      if (l) await update($, langAuto, () => l)
+    }
 
     void $.ui.open({ id: PANE, title: STRINGS[await langNow($)].title })
     $.clock.after(5000, async () => {
@@ -370,7 +379,6 @@ export const register: Register = on => {
     const watched = await read($, prs)
     const who = await read($, turn)
     const waiting = await read($, ask)
-    const cur = await read($, ticket)
     const frame_ = await read($, frame)
     const still = await read($, quiet)
     const sessionRepo = await read($, repoNow)
@@ -383,6 +391,8 @@ export const register: Register = on => {
       .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: stageOf(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
     const all = [...tasks, ...agents]
     const live = all.filter(x => !x.doneAt)
+    // with nothing else to go on, the ticket is the one the running work is named for
+    const cur = (await read($, ticket)) || live.find(x => x.ticket)?.ticket || ''
     const recent = tasks.filter(x => x.doneAt).slice(-2)
 
     // the view: one row per step of the current ticket, CI and merge from its PR
