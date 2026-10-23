@@ -271,7 +271,9 @@ async function viewOf($: any) {
   const named = await read($, ticket)
   const active = live.find(x => x.ticket)?.ticket ?? [...watched].reverse().find(p => p.ticket && p.state !== 'MERGED' && p.state !== 'CLOSED')?.ticket
   const idle = named && !all.some(x => x.ticket === named) && !watched.some(p => p.ticket === named)
-  const cur = (idle && active) || named || active || ''
+  // with nothing running either, the ticket most recently worked on, a just-merged one included
+  const lastWorked = [...watched].reverse().find(p => p.ticket)?.ticket ?? [...all].reverse().find(x => x.ticket)?.ticket
+  const cur = (idle && (active || lastWorked)) || named || active || ''
   const recent = tasks.filter(x => x.doneAt).slice(-2)
 
   // the view: one row per step of the current ticket, CI and merge from its PR
@@ -327,6 +329,8 @@ async function viewOf($: any) {
   if (ci.mark === 'run') eta > 0 ? (left += eta) : (blocker ||= 'CI')
   else if (ci.mark === 'none' && cur) ciTypical ? (left += ciTypical) : unknown++
   const finished = pr?.state === 'MERGED'
+  // a ticket with no work and no PR in this session has not started: no time to give
+  if (cur && !all.some(x => x.ticket === cur) && !pr && !blocker) left = unknown = 0
   const ticking = ci.mark === 'run' || steps.some(x => x.mark === 'run')
   const etaLine = finished ? s.done
     : left === 0 && unknown === 0 && !blocker ? ''

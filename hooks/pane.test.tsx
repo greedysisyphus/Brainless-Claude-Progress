@@ -417,6 +417,31 @@ test('the bar under the prompt is on by default beside the pane, and /progress b
   expect(lines[lines.length - 1]).toBe('#128 ✻ 上機驗證 · 約 10 分')
 })
 
+test('after the PR merges, an empty follow-up ticket does not take over, and has no estimate of its own', async ($, on) => {
+  let state = 'OPEN'
+  const pr = () => JSON.stringify({ title: 'Small fixes', state, url: 'https://github.com/me/app/pull/5', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2025-01-06T09:10:00Z', completedAt: '2025-01-06T09:28:00Z' }] })
+  const clock = engine(on, { store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true }, gh: a => (a.includes('view') && a.includes('5') ? pr() : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-small-fixes && gh pr view 5 --json state' })
+  await $.tool.call({ tool: 'Bash', command: 'git push -u origin me/130-follow-up' })
+  state = 'MERGED'
+  await clock.advance(60000)
+  let v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#128')
+  expect(await v.text(/^Done$/)).toBe('Done')
+  await v.close()
+})
+
+test('a ticket with nothing under it shows no estimate', async ($, on) => {
+  engine(on, { store: { 'dur:ci:me/app:total': [18 * 60000], 'seeded:me/app': true } })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'git checkout -b me/130-follow-up' })
+  const v = await view($)
+  expect(await v.text(/^#130$/)).toBe('#130')
+  expect(await v.text(/(Done|At least|work left)/)).toBeFalsy()
+  await v.close()
+})
+
 // ── motion ───────────────────────────────────────────────────────
 
 test('a background command is filed by its own description, not by words in the command', async ($, on) => {
