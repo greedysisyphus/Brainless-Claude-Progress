@@ -659,6 +659,23 @@ test('with nothing under way the band says it waits for the next step', async ($
   expect(await band($)).toBe('#128 | 等下一步・約 18 分 | 輪到你')
 })
 
+test('above the prompt the pane is a few plain lines, beside the transcript the full cards', async ($, on) => {
+  engine(on, { LANG: 'zh_TW.UTF-8', store: { 'dur:stage:verify': [10 * 60000] } })
+  await start($)
+  await verify($)
+  await $.turn.complete(reply('要你決定：今天合併嗎？'))
+  const inline = await $.ui.mount({ ...PANE, surface: 'terminal', props: { ...PANE.props, placement: 'inline' } })
+  expect((await inline.find({ type: 'Text', text: /^#128$/ }))?.text).toBe('#128')
+  expect((await inline.find({ type: 'Text', text: /上機驗證.*CI.*合併/ }))?.text).toMatch(/寫程式 · .*上機驗證 · .*CI · .*合併$/)
+  expect((await inline.find({ type: 'Text', text: /今天合併/ }))?.text).toMatch(/^輪到你\s+今天合併嗎？$/)
+  // no cards: the card-only headings are absent
+  expect(await inline.find({ type: 'Text', text: /^背景工作$/ })).toBeFalsy()
+  await inline.unmount()
+  const dock = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await dock.find({ type: 'Text', text: /^背景工作$/ }))?.text).toBe('背景工作')
+  await dock.unmount()
+})
+
 // ── motion ───────────────────────────────────────────────────────
 
 test('a background command is filed by its own description, not by words in the command', async ($, on) => {

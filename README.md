@@ -30,6 +30,7 @@ Accept the two trade-offs?
 - **Background work.** Subagents and background shell commands, with how long each has been running.
 - **Your turn.** When a reply hands a decision back to you, the pane shows it until you answer, even if more replies come in between.
 - **A one-line bar above the prompt**: `#128 ✻ Verify · ~10 min · Your turn`, always on by default; `/progress bar auto` shows it only while the pane is hidden.
+- **Compact when there is no room to dock.** In a narrow terminal the pane sits above the prompt as two or three plain lines (ticket and steps, time left, your turn) instead of three cards.
 - Animated with Claude's own spark (✢ ✳ ✶ ✻ ✽) while work runs; still when nothing does.
 
 ## Install
