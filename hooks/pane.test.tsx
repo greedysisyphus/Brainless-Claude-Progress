@@ -126,7 +126,7 @@ test('steps are told apart in four languages', async () => {
   expect(['Run full local CI and typecheck', 'npm run lint', 'tsc --noEmit'].map(stageOf)).toEqual(['verify', 'verify', 'verify'])
   expect(stageOf('Explore the codebase')).toBe('other')
   // waiting on a step is not doing it
-  expect(['Wait for required-ci and the review', 'Wait for preflight then run ship', '等 CI 跑完', '等待审查结果', 'CI の完了を待つ'.replace(/^/, '待機: ')].map(stageOf)).toEqual(['other', 'other', 'other', 'other', 'other'])
+  expect(['Wait for the CI gate and the review', 'Wait for preflight then run ship', '等 CI 跑完', '等待审查结果', 'CI の完了を待つ'.replace(/^/, '待機: ')].map(stageOf)).toEqual(['other', 'other', 'other', 'other', 'other'])
 })
 
 // ── CI ───────────────────────────────────────────────────────────
