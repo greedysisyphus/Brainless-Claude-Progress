@@ -214,6 +214,18 @@ async function poll($: any) {
   }
 }
 
+// the most frequent; a tie goes to the most recent
+export function mostOf(langs: Lang[]): Lang | undefined {
+  const count = new Map<Lang, number>()
+  for (const l of langs) count.set(l, (count.get(l) ?? 0) + 1)
+  let best: Lang | undefined
+  for (const l of [...langs].reverse()) if (!best || count.get(l)! > count.get(best)!) best = l
+  return best
+}
+
+// words the person typed, here or through Remote Control; not a notification, a peer's message or a trigger
+const isPerson = (e: any) => !e.isMeta && (e.origin?.kind === 'composer' || e.origin?.kind === 'bridge')
+
 async function langNow($: any): Promise<Lang> {
   return ((await read($, langPick)) || (await read($, langAuto)) || 'en') as Lang
 }
@@ -235,11 +247,13 @@ export const register: Register = on => {
     else {
       await $.store.delete('langFromSettings')
       // a resumed or reloaded conversation already says which language the person writes in
+      // the language most of the last ten user rows are in: a relayed notice now and then does not tip it
       const said = ((await $.session.messages().catch(() => [])) as any[])
-        .filter(m => m.role === 'user' && typeof m.text === 'string' && !/^\s*[</]/.test(m.text))
+        .filter(m => m.role === 'user' && typeof m.text === 'string' && !/^\s*[<\/[]/.test(m.text))
         .map(m => detectLang(m.text))
-        .filter(Boolean)
-      const l = said[said.length - 1]
+        .filter((l): l is Lang => Boolean(l))
+        .slice(-10)
+      const l = mostOf(said)
       if (l) await update($, langAuto, () => l)
     }
 
@@ -291,7 +305,7 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    if (!e.isMeta) {
+    if (isPerson(e)) {
       await update($, ask, () => '')
       // the person's own words say which language they read, unless Claude Code's setting already does
       const l = e.command ? undefined : detectLang(e.text)
@@ -446,10 +460,14 @@ export const register: Register = on => {
     if (ci.mark === 'run') eta > 0 ? (left += eta) : (blocker ||= 'CI')
     else if (ci.mark === 'none' && cur) ciTypical ? (left += ciTypical) : unknown++
     const finished = pr?.state === 'MERGED'
+    const ticking = ci.mark === 'run' || steps.some(x => x.mark === 'run')
     const etaLine = finished ? s.done
       : left === 0 && unknown === 0 && !blocker ? ''
       : left === 0 ? s.learning
-      : (blocker ? s.after(blocker, mins(left)) : s.eta(mins(left))) + (unknown ? s.noHistory(unknown) : '')
+      : (blocker ? s.after(blocker, mins(left))
+        // nothing under way: the time is real, but the clock has not started
+        : !ticking ? s.pending(mins(left))
+        : s.eta(mins(left))) + (unknown ? s.noHistory(unknown) : '')
     const merged: Step = { name: s.merge, mark: finished ? 'done' : 'none', note: pr ? `PR #${pr.number}` : '' }
     const failNames = pr ? pr.checks.filter(c => c.state === 'fail').map(c => c.name).slice(0, 2) : []
     const rows = [...steps, ci, merged]
