@@ -47,6 +47,8 @@ declare module 'claude-code' {
       langAuto: LangPick
       /** the repository the session runs in, owner/name; '' until known */
       repo: string
+      /** the band above the prompt: always, only while the pane is hidden, or never */
+      bar: 'always' | 'auto' | 'off'
     }
   }
 }

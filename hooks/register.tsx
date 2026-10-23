@@ -16,6 +16,7 @@ const quiet = atom({ plugin: 'brainless-claude-progress', key: 'still' } as cons
 const langPick = atom({ plugin: 'brainless-claude-progress', key: 'langPick' } as const, '' as LangPick)
 const langAuto = atom({ plugin: 'brainless-claude-progress', key: 'langAuto' } as const, '' as LangPick)
 const repoNow = atom({ plugin: 'brainless-claude-progress', key: 'repo' } as const, '')
+const barMode = atom({ plugin: 'brainless-claude-progress', key: 'bar' } as const, 'always' as 'always' | 'auto' | 'off')
 
 // ponytail: module flag the drawing sets and the frame timer reads; a reload resets it to off until the next draw
 let motion = false
@@ -352,32 +353,15 @@ async function viewOf($: any) {
   return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still }
 }
 
-// One line for Claude Code's own status line, for when the pane is not on screen:
-// the ticket, the step under way, the time left, and whether it is your turn.
-export function statusLine(v: Awaited<ReturnType<typeof viewOf>>): string | undefined {
+// The band above the prompt: the ticket, the step under way, the time left, and whether it is your turn.
+export function barOf(v: Awaited<ReturnType<typeof viewOf>>) {
   const running = v.steps.find(x => x.mark === 'run') ?? (v.ci.mark === 'run' ? v.ci : undefined)
   const time = v.finished ? v.s.done : v.left > 0 ? (v.blocker ? '≥ ' : '') + v.s.short(mins(v.left)) : ''
-  const parts = [running ? `✻ ${running.name}` : '', time, v.yourTurn ? v.s.yourTurn : ''].filter(Boolean)
-  if (!v.cur && !parts.length) return undefined
-  return [v.cur, parts.join(' · ')].filter(Boolean).join(' ')
+  return { running, time, isEmpty: !v.cur && !running && !v.yourTurn }
 }
-
-// ponytail: module memory of the last line sent; a reload sends it once more
-let lastStatus: string | undefined = ''
 
 export type BarMode = 'always' | 'auto' | 'off'
 export const barModeOf = (v: unknown): BarMode => (v === 'auto' || v === 'off' ? v : 'always')
-
-async function refreshStatus($: any) {
-  // always: under the prompt whatever the pane does; auto: only while the pane is off screen
-  const mode = barModeOf(await $.store.get('bar'))
-  const panes = mode === 'auto' ? ((await $.ui.panes().catch(() => [])) as any[]) : []
-  const onScreen = panes.some(p => p.id === PANE && p.isPlaced && p.isShown)
-  const line = mode === 'off' || onScreen ? undefined : statusLine(await viewOf($))
-  if (line === lastStatus) return
-  lastStatus = line
-  $.ui.status(line)
-}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -419,7 +403,10 @@ export const register: Register = on => {
       await update($, now, () => Date.now())
       await poll($)
     })
-    $.clock.every(5000, async () => refreshStatus($))
+    // 1.2.x pinned a line under the prompt; the band above it replaces that line
+    $.ui.status(undefined)
+    const savedBar = await $.store.get('bar')
+    if (savedBar !== undefined) await update($, barMode, () => barModeOf(savedBar))
     $.clock.every(250, async () => {
       if (motion) await update($, frame, f => (f + 1) % 1600)
     })
@@ -434,7 +421,7 @@ export const register: Register = on => {
       const mode = arg.toLowerCase()
       if (mode === 'always' || mode === 'auto' || mode === 'off') {
         await $.store.set('bar', mode)
-        await refreshStatus($)
+        await update($, barMode, () => mode)
       }
       const l = await langNow($)
       text = mode === 'always' || mode === 'auto' || mode === 'off' ? STRINGS[l].barSet[mode] : STRINGS[l].barUnknown
@@ -484,7 +471,6 @@ export const register: Register = on => {
       // a reply with no decision keeps the one still unanswered; only the person's reply clears it
       const waiting = askOf(e.answer)
       if (waiting) await update($, ask, () => waiting)
-      await refreshStatus($)
     }
     return next(e)
   })
@@ -542,6 +528,29 @@ export const register: Register = on => {
       if (id) await finish($, id, status)
     }
     return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const mode = await read($, barMode)
+    if (e.props.hasSurvey || mode === 'off') return next(e)
+    if (mode === 'auto') {
+      const panes = (await $.ui.panes().catch(() => [])) as any[]
+      if (panes.some(p => p.id === PANE && p.isPlaced && p.isShown)) return next(e)
+    }
+    const v = await viewOf($)
+    const { running, time, isEmpty } = barOf(v)
+    if (isEmpty) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const glyph = v.still ? '✻' : SPIN[v.frame_ % SPIN.length]!
+    const shimmer = v.still || !v.bar.includes('▱') ? v.bar : v.bar.replace('▱', v.frame_ % 2 ? '▰' : '▱')
+    return (
+      <Box flexDirection="row" gap={2}>
+        {v.cur ? <Text bold>{v.cur}</Text> : ''}
+        {running ? <Text><Text color="claude">{glyph}</Text> {running.name}{running.isCi && v.bar ? <Text color="claude"> {shimmer}</Text> : ''}</Text> : ''}
+        {time ? <Text color={v.finished ? 'success' : 'claude'}>{time}</Text> : ''}
+        {v.yourTurn ? <Text bold color="warning">{v.s.yourTurn}</Text> : ''}
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
