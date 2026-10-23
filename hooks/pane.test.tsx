@@ -106,7 +106,7 @@ test('a ticket comes from where the work says it is, not from any number in a co
   expect(ticketOfName('Check UTF-8 handling')).toBeUndefined()
   expect(ticketOfName('Hash with SHA-256')).toBeUndefined()
 
-  expect(ticketOfCommand('cd /Users/me/Worktrees/app/128-small-fixes && npm test')).toBe('#128')
+  expect(ticketOfCommand('cd /home/me/src/app/128-small-fixes && npm test')).toBe('#128')
   expect(ticketOfCommand('cd "/repo/worktrees/PROJ-42-login" && git status')).toBe('PROJ-42')
   expect(ticketOfCommand('git checkout -b claude/731-dark-mode')).toBe('#731')
   expect(ticketOfCommand('git push -u origin feature/PROJ-9-search')).toBe('PROJ-9')
@@ -313,6 +313,18 @@ test('a background command is filed by its own description, not by words in the 
   const v = await view($)
   expect(await v.text(/Verify/)).toMatch(/^[·✢✳✶✻✽] Verify$/)
   expect(await v.text(/Write/)).toBe('– Write')
+  await v.close()
+})
+
+test('a task is shown under the step its shown name says, whatever was stored for it', async ($, on) => {
+  engine(on)
+  await start($)
+  // no description: it is shown, and was stored, by the command's first 40 characters,
+  // but the stored step came from the whole command, which ends in a word for Review
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && npm run ci:local --workspace=app && git log --grep=review -1', run_in_background: true } as any)
+  const v = await view($)
+  expect(await v.text(/Verify/)).toMatch(/^[·✢✳✶✻✽] Verify$/)
+  expect(await v.text(/Review/)).toBe('– Review')
   await v.close()
 })
 
