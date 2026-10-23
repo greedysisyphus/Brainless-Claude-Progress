@@ -236,8 +236,13 @@ export function mostOf(langs: Lang[]): Lang | undefined {
   return best
 }
 
-// words the person typed, here or through Remote Control; not a notification, a peer's message or a trigger
-const isPerson = (e: any) => !e.isMeta && (e.origin?.kind === 'composer' || e.origin?.kind === 'bridge')
+// Words the person typed, here or through Remote Control. Told apart by what is NOT a person,
+// since builds name the person's own origin differently ('composer', 'human', ...).
+const NOT_PERSON = new Set([
+  'task-notification', 'scheduled-trigger', 'peer', 'peer-send-message', 'projects-relay', 'channel',
+  'coordinator', 'observer', 'observer-activity', 'auto-continuation', 'slack-ping', 'sdk', 'unclassified',
+])
+export const isPerson = (e: any) => !e.isMeta && !e.command && !NOT_PERSON.has(String(e.origin?.kind ?? ''))
 
 async function langNow($: any): Promise<Lang> {
   return ((await read($, langPick)) || (await read($, langAuto)) || 'en') as Lang

@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { checksOf, ciTotal, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { checksOf, ciTotal, isPerson, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -260,6 +260,25 @@ test('a notification is not the person: it neither changes the language nor clea
   await $.prompt.submit({ text: 'ok go ahead and merge it today please', origin: { kind: 'bridge' } } as any)
   v = await view($)
   expect(await v.text(/^Background$/)).toBe('Background')
+  expect(await v.text(/今天合併/)).toBeFalsy()
+  await v.close()
+})
+
+test('the person is anyone typing, whatever this build calls it; notices, peers and triggers are not', async () => {
+  for (const kind of ['composer', 'human', 'bridge', 'something-new'])
+    expect([kind, isPerson({ text: 'x', origin: { kind } })]).toEqual([kind, true])
+  for (const kind of ['task-notification', 'peer-send-message', 'scheduled-trigger', 'auto-continuation', 'coordinator'])
+    expect([kind, isPerson({ text: 'x', origin: { kind } })]).toEqual([kind, false])
+  expect(isPerson({ text: 'x', isMeta: true, origin: { kind: 'human' } })).toBe(false)
+  expect(isPerson({ text: '/progress', command: { name: 'progress', args: '' }, origin: { kind: 'human' } })).toBe(false)
+})
+
+test('an answer typed as "human" clears the waiting decision (seen in use)', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.turn.complete(reply('要你決定：今天合併嗎？'))
+  await $.prompt.submit({ text: '1', origin: { kind: 'human' } } as any)
+  const v = await view($)
   expect(await v.text(/今天合併/)).toBeFalsy()
   await v.close()
 })
