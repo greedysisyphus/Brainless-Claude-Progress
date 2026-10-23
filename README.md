@@ -2,6 +2,10 @@
 
 A progress pane for [Claude Code](https://claude.com/claude-code). It sits beside the chat and answers the questions you keep asking: *how far along is it, how long until it's done, and is it waiting on me?*
 
+![The pane beside a Claude Code session in a terminal: the folder and branch, what Claude is doing now, a background task and whether it is your turn](assets/pane.png)
+
+With a ticket and a pull request, the same pane shows each step, CI and a time estimate:
+
 ```
 #128                                   │
 add dark mode                        ─ ✶ ─
