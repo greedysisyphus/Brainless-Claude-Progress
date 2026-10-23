@@ -141,13 +141,19 @@ async function past($: any, key: string): Promise<number[]> {
 
 const ciKey = (repo: string | undefined, name: string) => `ci:${repo || '?'}:${name}`
 
+// each repository keeps its own step times; one with none yet borrows the shared record from before 1.5.0
+async function stagePast($: any, repo: string, stage: Stage): Promise<number[]> {
+  const own = await past($, `stage:${repo || '?'}:${stage}`)
+  return own.length ? own : past($, `stage:${stage}`)
+}
+
 // a task that ended: mark it, and remember how long its kind of step took
 async function finish($: any, id: string, status?: string) {
   const x = (await read($, bg)).find(y => y.id === id && !y.doneAt)
   if (!x) return
   const end = await $.clock.now()
   await update($, bg, all => all.map(y => (y.id === id && !y.doneAt ? { ...y, doneAt: end, status } : y)))
-  if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${x.stage}`, end - x.startedAt)
+  if (x.startedAt && x.stage !== 'other' && (!status || status === 'completed')) await learn($, `stage:${(await read($, repoNow)) || '?'}:${x.stage}`, end - x.startedAt)
 }
 
 // A PR this session opened belongs to the ticket at hand; one it only looks at belongs to whatever
@@ -341,7 +347,7 @@ async function viewOf($: any) {
     const last = seen[i]
     const mark: Mark = !last ? (i < furthest ? 'skip' : 'none')
       : !last.doneAt ? 'run' : last.status && last.status !== 'completed' ? 'fail' : 'done'
-    const typical = median(await past($, `stage:${stage}`))
+    const typical = median(await stagePast($, sessionRepo, stage))
     const ran = last && !last.doneAt && last.startedAt ? t - last.startedAt : 0
     const name = s[stage as 'write' | 'review' | 'verify']
     const over = mark === 'run' && typical > 0 && ran > typical

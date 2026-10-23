@@ -729,3 +729,30 @@ test('the spinner turns with the clock, /progress still freezes it, /progress mo
   await clock.advance(250)
   expect(await glyphs()).not.toEqual(before)
 })
+
+test('each repository keeps its own step times; one with none yet borrows the shared record', async ($, on) => {
+  let repo = 'me/app'
+  const clock = engine(on, { store: { 'dur:stage:verify': [10 * 60000], 'seeded:me/app': true, 'seeded:me/other': true }, gh: a => (a.includes('nameWithOwner') ? repo : '[]') })
+  await start($)
+  await clock.advance(6000)
+  // no times of its own yet: the shared record from before
+  await verify($)
+  let v = await view($)
+  expect(await v.text(/min left/)).toBe('just started · ~10 min left')
+  await v.close()
+  await clock.advance(20 * 60000)
+  await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>a1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  // the 20 minutes went to this repository
+  await verify($, 'Device verify #128 again')
+  v = await view($)
+  expect(await v.text(/min left/)).toBe('just started · ~20 min left')
+  await v.close()
+  // another repository still reads the shared 10, untouched by this one
+  repo = 'me/other'
+  await start($)
+  await clock.advance(6000)
+  await verify($, 'Device verify #129')
+  v = await view($)
+  expect(await v.text(/min left/)).toBe('just started · ~10 min left')
+  await v.close()
+})
