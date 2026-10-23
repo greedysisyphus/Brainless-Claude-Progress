@@ -65,6 +65,20 @@ function ticketOfRef(ref: string): string | undefined {
 
 // The ticket a shell command works on: only where the command says so (the folder it enters,
 // a branch it makes or pushes, an issue it develops), never a number that merely appears in its text.
+// The folder a command cds into, when that folder's name is what names its ticket.
+export function ticketDirOf(cmd: string): string | undefined {
+  const cd = cmd.match(CD)
+  const dir = cd && (cd[2] ?? cd[3] ?? cd[4])
+  return dir && ticketOfRef(dir) ? dir : undefined
+}
+
+// A folder named like a ticket counts only inside a git work tree named for the same ticket:
+// a scratch folder such as ".../128-shots" names nothing.
+async function isTicketTree($: any, dir: string, t: string): Promise<boolean> {
+  const run = await $.process.run(['git', '-C', dir, 'rev-parse', '--show-toplevel'], { timeoutMs: 5000 }).catch(() => undefined)
+  return run?.exitCode === 0 && ticketOfRef(String(run.stdout).trim()) === t
+}
+
 export function ticketOfCommand(cmd: string): string | undefined {
   const cd = cmd.match(CD)
   const dir = cd && (cd[2] ?? cd[3] ?? cd[4])
@@ -287,7 +301,9 @@ async function viewOf($: any) {
   const idle = named && !all.some(x => x.ticket === named) && !watched.some(p => p.ticket === named)
   // with nothing running either, the ticket most recently worked on, a just-merged one included
   const lastWorked = [...watched].reverse().find(p => p.ticket)?.ticket ?? [...all].reverse().find(x => x.ticket)?.ticket
-  const cur = (idle && (active || lastWorked)) || named || active || ''
+  // a ticket whose PR is finished and under which nothing runs gives way to running work elsewhere
+  const done = named && !live.some(x => x.ticket === named) && watched.some(p => p.ticket === named && (p.state === 'MERGED' || p.state === 'CLOSED'))
+  const cur = (idle && (active || lastWorked)) || (done && active) || named || active || ''
   const recent = tasks.filter(x => x.doneAt).slice(-2)
 
   // the view: one row per step of the current ticket, CI and merge from its PR
@@ -521,7 +537,9 @@ export const register: Register = on => {
     const cd = cmd.match(CD)
     const cwd = (cd && (cd[2] ?? cd[3] ?? cd[4])) || (await $.session.cwd())
 
-    const t = ticketOfCommand(cmd)
+    let t = ticketOfCommand(cmd)
+    const dir = ticketDirOf(cmd)
+    if (t && dir && ticketOfRef(dir) === t && !(await isTicketTree($, dir, t))) t = undefined
     if (t) await update($, ticket, () => t)
 
     const ref = cmd.match(PR_REF)

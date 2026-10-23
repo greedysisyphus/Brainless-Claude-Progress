@@ -28,9 +28,14 @@ function engine(on: any, opts: { prUrl?: string; status?: (string | undefined)[]
   on('agent.list', () => ({ value: opts.agents ?? [] }))
   on('turn.complete', (_: any, e: any) => ({ text: e.answer }))
   on('prompt.submit', (_: any, e: any) => ({ text: e.text }))
-  on('process.run', (_: any, e: any) => ({
-    value: { exitCode: opts.gh ? 0 : 1, stdout: opts.gh?.(e.argv) ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
-  }))
+  on('process.run', (_: any, e: any) => {
+    // git: any folder is its own work tree except a scratch one (named "...-shots")
+    if (e.argv[0] === 'git' && e.argv.includes('rev-parse')) {
+      const dir = String(e.argv[2])
+      return { value: { exitCode: /shots/.test(dir) ? 128 : 0, stdout: /shots/.test(dir) ? '' : dir.replace(/\/src$/, '') + '\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    return { value: { exitCode: opts.gh ? 0 : 1, stdout: opts.gh?.(e.argv) ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('tool.call', (_: any, e: any) =>
     e.tool === 'Agent'
       ? { result: { status: 'async_launched', agentId: 'a1' } }
@@ -547,6 +552,48 @@ test('a finished step teaches the next one how long it takes', async ($, on) => 
   await $.tool.call({ tool: 'Agent', description: 'Device verify #128 again', prompt: 'go', run_in_background: true } as any)
   const v = await view($)
   expect(await v.text(/min left/)).toBe('just started · ~7 min left')
+  await v.close()
+})
+
+test('a scratch folder named like a ticket does not switch the ticket (a screenshots folder)', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Agent', description: 'Writer stage 1 for #132', prompt: 'go', run_in_background: true } as any)
+  await $.tool.call({ tool: 'Bash', command: 'cd /tmp/scratch/128-shots/ && sips -s format png a.png' })
+  const v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#132')
+  await v.close()
+})
+
+test('alone, a scratch folder named like a ticket names no ticket', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /tmp/scratch/128-shots/ && ls' })
+  const v = await view($)
+  expect(await v.text(/^#\d+$/)).toBeFalsy()
+  expect(await v.text(/^Current ticket$/)).toBe('Current ticket')
+  await v.close()
+})
+
+test('a real work tree named for a ticket names it', async ($, on) => {
+  engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/140-new-thing && git status' })
+  const v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#140')
+  await v.close()
+})
+
+test('a merged ticket with nothing running gives way to the ticket whose work runs', async ($, on) => {
+  const merged = JSON.stringify({ title: 'Small fixes', state: 'MERGED', url: 'https://github.com/me/app/pull/5', headRefName: 'me/128-small-fixes', statusCheckRollup: [] })
+  const clock = engine(on, { gh: a => (a.includes('view') && a.includes('5') ? merged : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Agent', description: 'Writer stage 1 for #132', prompt: 'go', run_in_background: true } as any)
+  // back in the merged ticket's tree for a last look
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-small-fixes && gh pr view 5 --json state' })
+  await clock.advance(60000)
+  const v = await view($)
+  expect(await v.text(/^#1\d\d$/)).toBe('#132')
   await v.close()
 })
 
