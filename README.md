@@ -29,7 +29,7 @@ Accept the two trade-offs?
 ## What it shows
 
 - **The current ticket and its steps.** Write → Review → Verify → CI → Merge, each marked done, running or not started.
-- **No ticket? Still a status.** The folder and branch stand in for the ticket. If Claude keeps a to-do list, the pane shows it (*2/5 done*, each item ticked, running or waiting); otherwise it shows what Claude is doing right now (*Now: Reading player.ts*) and how long this turn has run.
+- **No ticket? Still a status.** The folder and branch stand in for the ticket. If Claude keeps a to-do list (in the terminal or in the desktop app), the pane shows it (*2/5 done*, each item ticked, running or waiting); otherwise it shows what Claude is doing right now (*Now: Reading player.ts*) and how long this turn has run.
 - **Stuck? It says so.** Three failed tool calls in a row, with no success between, turn into a yellow line in the pane and above the prompt (*Stuck: 3 failures in a row (Run the tests)*): the moment worth stepping in.
 - **What changed this turn.** The files Claude edited or wrote this turn stay listed after it ends (*Changed this turn: 2 files: player.ts, README.md*), until the next turn starts.
 - **CI status** of the ticket's pull request, polled with the GitHub CLI once a minute. A check that failed on an earlier push of the same commit no longer shows as failed once it has been re-run.

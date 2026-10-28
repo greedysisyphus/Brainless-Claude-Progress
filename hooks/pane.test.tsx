@@ -815,6 +815,43 @@ test('with no ticket Claude’s own to-do list is the progress, from TodoWrite o
   await b.unmount()
 })
 
+test('the desktop plan tool builds the list, then advances it by step and by 1-based number', async ($, on) => {
+  engine(on, { LANG: 'en_US.UTF-8' })
+  await start($)
+  await $.turn.start({ text: '', turnId: 't1' } as any)
+  await $.tool.call({ tool: 'Read', file_path: '/w/src/player.ts' } as any)
+  const plan = 'mcp__ccd_turn__update_plan'
+  // a step call with no list yet changes nothing, and the plan call itself is not what Claude is doing
+  await $.tool.call({ tool: plan, advance: true } as any)
+  let v = await view($)
+  expect(await v.text(/^Now:/)).toBe('Now: Reading player.ts')
+  expect(await v.text(/done$/)).toBeFalsy()
+  await v.close()
+  await $.tool.call({ tool: plan, scope: 'first_task', items: [
+    { content: 'Read the player', status: 'in_progress' },
+    { content: 'Write the log', status: 'pending' },
+    { content: 'Resume playback', status: 'pending' },
+    { content: 'Ship it', status: 'pending' },
+  ] } as any)
+  v = await view($)
+  expect(await v.text(/done$/)).toBe('0/4 done')
+  expect(await v.text(/^Read the player$/)).toBe('Read the player')
+  await v.close()
+  await $.tool.call({ tool: plan, advance: true } as any)
+  v = await view($)
+  expect(await v.text(/done$/)).toBe('1/4 done')
+  await v.close()
+  // numbers count from 1: a 0-based reading would mark the wrong two
+  await $.tool.call({ tool: plan, done: [2, 4], start: 3 } as any)
+  v = await view($)
+  expect(await v.text(/done$/)).toBe('3/4 done')
+  await v.close()
+  await $.tool.call({ tool: plan, advance: true } as any)
+  v = await view($)
+  expect(await v.text(/done$/)).toBe('4/4 done')
+  await v.close()
+})
+
 test('Task calls build and update the same list', async ($, on) => {
   engine(on, { LANG: 'en_US.UTF-8' })
   await start($)
