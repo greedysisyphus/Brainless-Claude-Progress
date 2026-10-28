@@ -287,9 +287,20 @@ export function activityOf(e: any): { tool: string; text: string } {
   return { tool: String(e.tool), text: arg.includes('/') && !/^https?:/.test(arg) ? arg.split('/').filter(Boolean).pop() ?? arg : arg }
 }
 
-// Claude's own to-do list after a TodoWrite, TaskCreate or TaskUpdate call
+// Claude's own to-do list after a TodoWrite, TaskCreate, TaskUpdate or desktop plan call
+const PLAN = 'mcp__ccd_turn__update_plan'
 export function todosAfter(list: Todo[], e: any, result: any): Todo[] {
   if (e.tool === 'TodoWrite') return (e.todos ?? []).map((x: any, i: number) => ({ id: String(i), text: x.status === 'in_progress' && x.activeForm ? x.activeForm : x.content, status: x.status }))
+  // the desktop app's own plan tool: a whole list, or steps by 1-based number
+  if (e.tool === PLAN) {
+    if (Array.isArray(e.items)) return e.items.map((x: any, i: number) => ({ id: String(i), text: String(x.content ?? ''), status: x.status ?? 'pending' }))
+    if (e.advance) {
+      const at = list.findIndex(x => x.status === 'in_progress')
+      const nextAt = list.findIndex((x, i) => i > at && x.status === 'pending')
+      return list.map((x, i) => (i === at ? { ...x, status: 'completed' } : i === nextAt ? { ...x, status: 'in_progress' } : x))
+    }
+    return list.map((x, i) => (e.done?.includes(i + 1) ? { ...x, status: 'completed' } : e.start === i + 1 ? { ...x, status: 'in_progress' } : x))
+  }
   if (e.tool === 'TaskCreate' && result?.task?.id) return [...list, { id: String(result.task.id), text: e.subject, status: 'pending' }]
   if (e.tool === 'TaskUpdate') {
     if (e.status === 'deleted') return list.filter(x => x.id !== e.taskId)
@@ -601,10 +612,10 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     if ((e as any).agentId) return next(e)
     const tool = String((e as any).tool)
-    if (!['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'AskUserQuestion', 'ToolSearch'].includes(tool)) await update($, doing, () => activityOf(e))
+    if (!['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'AskUserQuestion', 'ToolSearch', PLAN].includes(tool)) await update($, doing, () => activityOf(e))
     const ran = await next(e)
     const r = ran as any
-    if (['TodoWrite', 'TaskCreate', 'TaskUpdate'].includes(tool)) await update($, todos, list => todosAfter(list, e, r.result))
+    if (['TodoWrite', 'TaskCreate', 'TaskUpdate', PLAN].includes(tool)) await update($, todos, list => todosAfter(list, e, r.result))
     // a call the person declined (deny) is neither a failure nor a success
     if (r.isError) await update($, fails, f => ({ n: f.n + 1, text: activityOf(e).text }))
     else if (r.deny === undefined) await update($, fails, f => (f.n ? { n: 0, text: '' } : f))
