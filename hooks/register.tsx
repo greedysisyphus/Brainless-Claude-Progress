@@ -131,6 +131,13 @@ export const stageOf = (s: string): Stage =>
     : /verif|device|\bqa\b|\btest|e2e|simulator|\bci\b|ci:local|typecheck|type-check|\btsc\b|\blint|驗證|验证|驗機|上機|上机|測試|测试|検証|確認|テスト/i.test(s) ? 'verify'
     : /writ|implement|\bfix|build|refactor|寫|写|修|實作|实现|実装|修正/i.test(s) ? 'write' : 'other'
 
+// watching a worker shows its step under way, but the watch's length is not that step's time
+export const watchedStage = (s: string): Stage =>
+  stageOf(s) !== 'other' ? stageOf(s)
+    : /\breviewers?\b|審查者|审查者|レビュアー/i.test(s) ? 'review'
+    : /\bverifiers?\b|\btesters?\b|驗機員|验机员/i.test(s) ? 'verify'
+    : /\bwriters?\b|\bimplementers?\b|寫手|写手/i.test(s) ? 'write' : 'other'
+
 // this many failed calls in a row, with no success between, is worth the person's eyes
 const STUCK = 3
 const EDITS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit']
@@ -357,9 +364,9 @@ async function viewOf($: any) {
   // agents spawned before this load, or not through the Agent tool, are known only to the engine
   const agents = ((await $.agent.list().catch(() => [])) as any[])
     .filter(a => ['running', 'pending', 'waiting'].includes(a.status) && !tasks.some(x => x.id === a.id))
-    .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: stageOf(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
+    .map((a): BgTask => ({ id: a.id, label: a.description, kind: 'agent', stage: watchedStage(a.description), ticket: ticketOfName(a.description), startedAt: 0 }))
   // filed by today's rules, so a task recorded before an update or a reload is not stuck under an old step
-  const all = [...tasks.map(x => ({ ...x, stage: stageOf(x.label) })), ...agents]
+  const all = [...tasks.map(x => ({ ...x, stage: watchedStage(x.label) })), ...agents]
   const live = all.filter(x => !x.doneAt)
   // the ticket last named, unless nothing here belongs to it while running work or a watched PR
   // belongs to another: a ticket with work under way beats an empty one
@@ -371,11 +378,14 @@ async function viewOf($: any) {
   // a ticket whose PR is finished and under which nothing runs gives way to running work elsewhere
   const done = named && !live.some(x => x.ticket === named) && watched.some(p => p.ticket === named && (p.state === 'MERGED' || p.state === 'CLOSED'))
   const cur = (idle && (active || lastWorked)) || (done && active) || named || active || ''
-  const recent = tasks.filter(x => x.doneAt).slice(-2)
+  // a task run again and again shows once, with how many times it ended before
+  const ended = tasks.filter(x => x.doneAt)
+  const repeats = (x: BgTask) => ended.filter(y => y.label === x.label).length - (x.doneAt ? 1 : 0)
+  const recent = ended.filter((x, i) => !live.some(y => y.label === x.label) && !ended.slice(i + 1).some(y => y.label === x.label)).slice(-2)
 
   // the view: one row per step of the current ticket, CI and merge from its PR
   const mine = all.filter(x => x.ticket === cur)
-  const pr = [...watched].reverse().find(p => p.ticket === cur) ?? (cur ? undefined : watched[watched.length - 1])
+  const pr = [...watched].reverse().find(p => p.ticket === cur) ?? (cur ? undefined : [...watched].reverse().find(p => !p.stale))
   const repo = pr?.repo ?? sessionRepo
   // remaining time: what this kind of step took before, less what it has run; unknown until learned
   // a running step with no history can't count down: the estimate then starts when it ends
@@ -410,7 +420,8 @@ async function viewOf($: any) {
   let ci: Step = { name: 'CI', mark: 'none', note: '', isCi: true }
   let bar = ''
   if (pr) {
-    const pend = pr.checks.filter(c => c.state === 'pending')
+    // after a merge or a close, a check still waiting never runs
+    const pend = pr.state === 'MERGED' || pr.state === 'CLOSED' ? [] : pr.checks.filter(c => c.state === 'pending')
     const fail = pr.checks.filter(c => c.state === 'fail')
     const pass = pr.checks.filter(c => c.state === 'pass')
     for (const c of pend) {
@@ -460,7 +471,7 @@ async function viewOf($: any) {
   const changed = changedFiles.length ? s.changed(changedFiles.length, changedFiles.slice(0, 3).join(s.sep) + (changedFiles.length > 3 ? '…' : '')) : ''
 
   motion = !still && (busy || ci.mark === 'run')
-  return { s, t, tasks, live, recent, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed }
+  return { s, t, tasks, live, recent, repeats, cur, pr, steps, ci, rows, bar, etaLine, left, blocker, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed }
 }
 
 // The band above the prompt: the ticket, the step under way, the time left, and whether it is your turn.
@@ -573,6 +584,8 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (isPerson(e)) {
       await update($, ask, () => '')
+      // a PR finished before the person moved on is history, not progress
+      await update($, prs, all => all.map(p => (p.state === 'MERGED' || p.state === 'CLOSED' ? { ...p, stale: true } : p)))
       // the person's own words say which language they read, unless Claude Code's setting already does
       const l = e.command ? undefined : detectLang(e.text)
       if (l && !(await $.store.get('langFromSettings'))) {
@@ -709,7 +722,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { s, t, live, recent, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed } = await viewOf($)
+    const { s, t, live, recent, repeats, cur, pr, steps, ci, rows, bar, etaLine, finished, failNames, busy, yourTurn, frame_, still, list, todoDone, now_, turnLine, where, stuck, changed } = await viewOf($)
     const width = Math.max(24, (e.props as any).bodyColumns ?? 40)
     const ago = (ms: number, from = 1) => (!from ? '' : ms < 60000 ? s.justStarted : s.minutes(Math.round(ms / 60000)))
     const spin = SPIN[frame_ % SPIN.length]!
@@ -752,16 +765,18 @@ export const register: Register = on => {
     // the label gives way to the age, so the age never wraps: border and padding 4, glyph 2, a gap 1
     const taskRow = (x: BgTask) => {
       const age = ago(t - x.startedAt, x.startedAt)
+      const more = repeats(x) ? ` ${s.earlier(repeats(x))}` : ''
       return (
         <Box flexDirection="row" justifyContent="space-between">
-          <Text><Text color="claude">{still ? '✻' : spin} </Text>{fit(x.label, width - 7 - age.length)}</Text>
+          <Text><Text color="claude">{still ? '✻' : spin} </Text>{fit(x.label, width - 7 - age.length - more.length)}{more ? <Text dimColor>{more}</Text> : ''}</Text>
           <Text dimColor>{age}</Text>
         </Box>
       )
     }
     const doneRow = (x: BgTask) => {
       const bad = x.status && x.status !== 'completed'
-      return <Text dimColor><Text color={bad ? 'error' : 'success'}>{bad ? '✕' : '✓'}</Text> {fit(x.label, width - 6)}</Text>
+      const more = repeats(x) ? ` ${s.earlier(repeats(x))}` : ''
+      return <Text dimColor><Text color={bad ? 'error' : 'success'}>{bad ? '✕' : '✓'}</Text> {fit(x.label, width - 6 - more.length)}{more}</Text>
     }
 
     // seated above the prompt (no room to dock): two or three plain lines instead of three cards

@@ -25,6 +25,8 @@ export type PrWatch = {
   state?: string
   checks: CheckRun[]
   polledAt?: number
+  /** finished, and the person has written since: no longer shown unless a ticket names it */
+  stale?: boolean
 }
 
 export type Turn = 'working' | 'asking' | 'idle'

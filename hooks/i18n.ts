@@ -41,6 +41,7 @@ type Strings = {
   learning: string
   background: string
   running: (n: number) => string
+  earlier: (n: number) => string
   none: string
   yourTurn: string
   yourTurnNone: string
@@ -91,6 +92,7 @@ export const STRINGS: Record<Lang, Strings> = {
     learning: 'Done in: still learning, needs a few finished runs',
     background: 'Background',
     running: n => `${n} running`,
+    earlier: n => `+${n} ended`,
     none: 'None',
     yourTurn: 'Your turn',
     yourTurnNone: 'Your turn: nothing',
@@ -139,6 +141,7 @@ export const STRINGS: Record<Lang, Strings> = {
     learning: '預計完成：還在學，跑完幾張票後才算得出來',
     background: '背景工作',
     running: n => `${n} 項進行中`,
+    earlier: n => `另 ${n} 次已結束`,
     none: '沒有',
     yourTurn: '輪到你',
     yourTurnNone: '輪到你：沒有',
@@ -187,6 +190,7 @@ export const STRINGS: Record<Lang, Strings> = {
     learning: '预计完成：还在学习，跑完几次后才能估算',
     background: '后台任务',
     running: n => `${n} 项进行中`,
+    earlier: n => `另 ${n} 次已结束`,
     none: '没有',
     yourTurn: '轮到你',
     yourTurnNone: '轮到你：没有',
@@ -235,6 +239,7 @@ export const STRINGS: Record<Lang, Strings> = {
     learning: '完了予定：学習中。何回か完了すると見積もれます',
     background: 'バックグラウンド',
     running: n => `${n} 件実行中`,
+    earlier: n => `他 ${n} 件終了`,
     none: 'なし',
     yourTurn: 'あなたの番',
     yourTurnNone: 'あなたの番：なし',
