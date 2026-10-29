@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { SAMPLE_ROLLUP } from './ci-fixture'
 import { askOf, detectLang, normalizeLang, STRINGS } from './i18n'
-import { activityOf, checksOf, ciTotal, isPerson, labelOf, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName } from './register'
+import { activityOf, checksOf, ciTotal, isPerson, labelOf, latestRuns, mostOf, sparkFor, stageOf, ticketOfCommand, ticketOfName, watchedStage } from './register'
 
 const PANE = {
   plugin: 'brainless-claude-progress', component: 'Pane', requestId: 'progress',
@@ -157,6 +157,38 @@ test('steps are told apart in four languages', async () => {
   expect(stageOf('Explore the codebase')).toBe('other')
   // waiting on a step is not doing it
   expect(['Wait for the CI gate and the review', 'Wait for preflight then run ship', '等 CI 跑完', '等待审查结果', 'CI の完了を待つ'.replace(/^/, '待機: ')].map(stageOf)).toEqual(['other', 'other', 'other', 'other', 'other'])
+})
+
+test('watching a worker lights its step without timing it, and a watch run again shows once', async ($, on) => {
+  expect(['Watch writer for prompt, questions, or final report', 'Wait for the reviewer', '等寫手回報'].map(stageOf)).toEqual(['other', 'other', 'other'])
+  expect(['Watch writer for prompt, questions, or final report', 'Wait for the reviewer', '等寫手回報', 'Wait for the CI gate and the review'].map(watchedStage)).toEqual(['write', 'review', 'write', 'other'])
+  const clock = engine(on)
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'cd /w/128-x && git status' })
+  const watch = () => $.tool.call({ tool: 'Bash', command: 'sleep 600', description: 'Watch writer for prompt, questions, or final report', run_in_background: true })
+  const ended = () => $.session.append({ message: { type: 'user', content: [{ type: 'text', text: '<task-notification><task-id>b1</task-id><status>completed</status></task-notification>' }] }, origin: { kind: 'task-notification' } } as any)
+  await watch()
+  await clock.advance(5 * 60000)
+  await ended()
+  // the watch's five minutes are not what writing takes
+  let v = await view($)
+  expect(await v.text(/^Done in:/)).toBe('Done in: still learning, needs a few finished runs')
+  await v.close()
+  await watch()
+  await ended()
+  await watch()
+  await clock.advance(60000)
+  v = await view($)
+  expect(await v.text(/Write$/)).toMatch(/^[·✢✳✶✻✽] Write$/)
+  expect(await v.text(/Watch writer/)).toMatch(/^[·✢✳✶✻✽] Watch writer for .*… \+2 ended$/)
+  expect(await v.text(/^✓/)).toBeFalsy()
+  // with the watch's five minutes learned as writing, this would count down from them
+  expect(await v.text(/left/)).toBeFalsy()
+  await v.close()
+  await ended()
+  v = await view($)
+  expect(await v.text(/Watch writer/)).toMatch(/^✓ Watch writer for .*… \+2 ended$/)
+  await v.close()
 })
 
 // ── CI ───────────────────────────────────────────────────────────
@@ -491,6 +523,19 @@ test('after the PR merges, an empty follow-up ticket does not take over, and has
   expect(await v.text(/^#1\d\d$/)).toBe('#128')
   expect(await v.text(/^Done$/)).toBe('Done')
   await v.close()
+})
+
+test('a merged PR with no ticket shows no running CI, and leaves the band once the person writes again', async ($, on) => {
+  const merged = JSON.stringify({ title: 'Menu motion', state: 'MERGED', url: 'https://github.com/me/app/pull/7', headRefName: 'redesign/menu', statusCheckRollup: [{ name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2025-01-06T09:00:00Z', completedAt: '2025-01-06T09:05:00Z' }, { name: 'preview', status: 'QUEUED', conclusion: '', startedAt: '2025-01-06T09:00:00Z', completedAt: '0001-01-01T00:00:00Z' }] })
+  const clock = engine(on, { LANG: 'zh_TW.UTF-8', gh: a => (a.includes('view') && a.includes('7') ? merged : a.includes('nameWithOwner') ? 'me/app' : '[]') })
+  await start($)
+  await $.tool.call({ tool: 'Bash', command: 'gh pr view 7 --json state' })
+  await clock.advance(60000)
+  // just merged: it is still the news, and the check left waiting will never run
+  expect(await band($)).toBe('已完成 | 輪到你')
+  await $.prompt.submit({ text: '加一個整季選項', origin: { kind: 'composer' } } as any)
+  await clock.advance(60000)
+  expect(await band($)).toBe('輪到你')
 })
 
 test('a ticket with nothing under it shows no estimate', async ($, on) => {
